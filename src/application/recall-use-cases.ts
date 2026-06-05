@@ -1,0 +1,218 @@
+import type { Database } from "bun:sqlite";
+
+import { classifyTaskContext, detectsOperationalContext } from "../context/compiler";
+import type { CodeMemoryResult, RecallResult } from "../domain/schema";
+import { getMemoriesForCodeRows, searchMemoryFts } from "../persistence/repository";
+import type { HybridQueryResult } from "../retrieval/hybrid";
+import { hybridRetrieve } from "../retrieval/hybrid";
+import { expandQuery, expandQueryForEmbedding } from "../retrieval/query-expansion";
+import { rerankCandidates } from "../retrieval/reranker";
+import type { RecallScoreInput } from "../retrieval/scoring";
+import { rankRecallResults, selectWeights } from "../retrieval/scoring";
+import { embeddingForText } from "./service-helpers";
+
+export interface RecallOptions {
+  /** Expand query with synonyms before search (P1). */
+  expandQuery?: boolean;
+  /** Rerank results with cross-encoder (P1). */
+  rerank?: boolean;
+  /** Open file paths for query expansion. */
+  openPaths?: string[];
+}
+
+function stageOneLimit(finalLimit: number): number {
+  return Math.max(finalLimit * 4, 40);
+}
+
+function expandedQuery(query: string, opts?: RecallOptions): string {
+  return opts?.expandQuery !== false
+    ? expandQuery(query, { openPaths: opts?.openPaths }).expandedQuery
+    : query;
+}
+
+function embeddingQuery(query: string, opts?: RecallOptions): string {
+  return opts?.expandQuery !== false
+    ? expandQueryForEmbedding(query, { openPaths: opts?.openPaths })
+    : query;
+}
+
+function applyRerank(
+  query: string,
+  results: RecallResult[],
+  finalLimit: number,
+  enabled: boolean,
+  _currentFilePath?: string | null,
+): RecallResult[] {
+  if (enabled && query.trim() && results.length > finalLimit) {
+    const candidates = results.map((r) => ({
+      item: r.item,
+      rrfScore: 1.0 / (1 + r.rank),
+    }));
+    const reranked = rerankCandidates(query, candidates, {
+      stageOneLimit: Math.max(finalLimit * 4, 20),
+      stageTwoLimit: finalLimit,
+    });
+    return reranked.map((r, i) => ({
+      item: r.item,
+      rank: i + 1,
+      snippet: r.item.text.slice(0, 200),
+    }));
+  }
+
+  return results.length > finalLimit ? results.slice(0, finalLimit) : results;
+}
+
+/**
+ * Apply multi-factor scoring (P2 — Intelligence Upgrade) to rank results.
+ * This layers on top of RRF + cross-encoder reranking with:
+ *   recency, confidence, access frequency, feedback score, risk boost,
+ *   graph degree, code path matching.
+ */
+function applyScoring(
+  results: RecallResult[],
+  opts: {
+    query: string;
+    currentFilePath?: string | null;
+    graphDegrees?: Map<string, number>;
+  },
+): RecallResult[] {
+  const taskType = classifyTaskContext(opts.query);
+  const weights = selectWeights(taskType);
+  const isOperational = detectsOperationalContext(opts.query);
+
+  const inputs: RecallScoreInput[] = results.map((r) => {
+    const item = r.item;
+    // Extract feedback score from metadata
+    let feedbackScore = 0;
+    try {
+      const meta = JSON.parse(item.metadata_json);
+      feedbackScore = meta.feedback_score ?? 0;
+    } catch {
+      /* ignore parse errors */
+    }
+
+    // Estimate access count from metadata (updated by feedback loop)
+    let accessCount = 1;
+    try {
+      const meta = JSON.parse(item.metadata_json);
+      accessCount = meta.feedback_events ?? 1;
+    } catch {
+      /* ignore */
+    }
+
+    const isCodePathMatch = opts.currentFilePath
+      ? item.metadata_json.includes(opts.currentFilePath)
+      : false;
+
+    return {
+      similarity: r.rank <= 3 ? 0.9 : 1.0 / (1 + r.rank), // approximate from rank
+      ftsRank: r.rank,
+      item,
+      accessCount,
+      feedbackScore,
+      graphDegree: opts.graphDegrees?.get(item.id) ?? 0,
+      isCodePathMatch,
+      isOperationalContext: isOperational,
+    };
+  });
+
+  const ranked = rankRecallResults(inputs, weights);
+  return ranked.map((r, i) => ({
+    item: r.item,
+    rank: i + 1,
+    snippet: r.item.text.slice(0, 200),
+  }));
+}
+
+function boostCurrentFileMatches(
+  db: Database,
+  projectId: string,
+  currentFilePath: string | null | undefined,
+  results: RecallResult[],
+): RecallResult[] {
+  if (!currentFilePath) {
+    return results;
+  }
+
+  const linkedRows = db
+    .query(`
+    SELECT mcl.memory_id
+    FROM memory_code_links mcl
+    JOIN code_entities ce ON ce.id = mcl.entity_id
+    WHERE mcl.project_id = ? AND ce.path = ?
+  `)
+    .all(projectId, currentFilePath) as { memory_id: string }[];
+  const linkedMemoryIds = new Set(linkedRows.map((r) => r.memory_id));
+
+  const boosted = results.map((res) => ({
+    ...res,
+    rank: linkedMemoryIds.has(res.item.id) ? res.rank - 100.0 : res.rank,
+  }));
+  boosted.sort((a, b) => a.rank - b.rank);
+  return boosted;
+}
+
+export function recall(
+  db: Database,
+  projectId: string,
+  query: string,
+  limit?: number,
+  mode: "fts" | "vector" | "hybrid" = "fts",
+  embedding?: Float32Array | null,
+  currentFilePath?: string | null,
+  opts?: RecallOptions,
+): RecallResult[] {
+  const finalLimit = limit ?? 10;
+  const effectiveQuery = expandedQuery(query, opts);
+  const queryEmbedding =
+    embedding ?? (mode === "fts" ? null : embeddingForText(embeddingQuery(query, opts)));
+
+  let results: RecallResult[];
+  if (mode === "fts" || !queryEmbedding) {
+    results = searchMemoryFts(db, projectId, effectiveQuery, stageOneLimit(finalLimit)).map(
+      (r, i) => ({
+        item: r.item,
+        rank: i + 1,
+        snippet: r.snippet,
+      }),
+    );
+  } else {
+    const queryText = mode === "hybrid" ? effectiveQuery : null;
+    results = hybridRetrieve(
+      db,
+      projectId,
+      queryText,
+      queryEmbedding,
+      stageOneLimit(finalLimit),
+    ).map((r, i) => ({
+      item: r.item,
+      rank: i + 1,
+      snippet: r.item.text.slice(0, 200),
+    }));
+  }
+
+  results = applyRerank(query, results, finalLimit, opts?.rerank !== false, currentFilePath);
+  // P2: Multi-factor scoring after reranking
+  results = applyScoring(results, { query, currentFilePath });
+  return boostCurrentFileMatches(db, projectId, currentFilePath, results);
+}
+
+export function hybridRecall(
+  db: Database,
+  projectId: string,
+  query: string | null,
+  embedding: Float32Array | null,
+  limit = 10,
+): HybridQueryResult[] {
+  const queryEmbedding = embedding ?? (query?.trim() ? embeddingForText(query) : null);
+  return hybridRetrieve(db, projectId, query, queryEmbedding, limit);
+}
+
+export function getMemoriesForCode(
+  db: Database,
+  projectId: string,
+  path: string,
+  symbol?: string,
+): CodeMemoryResult[] {
+  return getMemoriesForCodeRows(db, projectId, path, symbol);
+}

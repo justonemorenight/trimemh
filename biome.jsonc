@@ -1,0 +1,154 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.16/schema.json",
+  "root": true,
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "ignoreUnknown": true,
+    "includes": ["src/**", "tests/**", "scripts/**", "package.json", "tsconfig.json", "README.md"]
+  },
+  "formatter": {
+    "enabled": true,
+    "formatWithErrors": false,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100,
+    "lineEnding": "lf"
+  },
+  "javascript": {
+    "globals": ["Bun"],
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "always",
+      "trailingCommas": "all",
+      "arrowParentheses": "always"
+    }
+  },
+  "assist": {
+    "enabled": true,
+    "actions": {
+      "recommended": true,
+      "source": {
+        "organizeImports": {
+          "level": "on",
+          "options": {
+            "groups": [
+              [":BUN:", ":NODE:"],
+              ":BLANK_LINE:",
+              ":PACKAGE:",
+              ":BLANK_LINE:",
+              ":ALIAS:",
+              ":BLANK_LINE:",
+              ":PATH:"
+            ],
+            "identifierOrder": "lexicographic"
+          }
+        }
+      }
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "correctness": {
+        "recommended": true,
+        "noUndeclaredDependencies": "error",
+        "noUndeclaredVariables": "error",
+        "noUnresolvedImports": "off",
+        "noUnusedFunctionParameters": "error",
+        "noUnusedImports": "error",
+        "noUnusedVariables": "error",
+        "useParseIntRadix": "error"
+      },
+      "suspicious": {
+        "recommended": true,
+        "noDoubleEquals": "error",
+        "noExplicitAny": "error",
+        "noFocusedTests": "error",
+        "noImplicitAnyLet": "error",
+        "noSkippedTests": "error",
+        "noTsIgnore": "error",
+        "noVar": "error",
+        "useAwait": "warn",
+        "useErrorMessage": "error"
+      },
+      "style": {
+        "recommended": true,
+        "noCommonJs": "error",
+        "noInferrableTypes": "warn",
+        "noNamespace": "error",
+        "noNonNullAssertion": "error",
+        "noParameterAssign": "error",
+        "useAsConstAssertion": "error",
+        "useBlockStatements": "warn",
+        "useConsistentArrayType": "error",
+        "useConst": "error",
+        "useExportType": "error",
+        "useImportType": "error",
+        "useNodejsImportProtocol": "error",
+        "useTemplate": "error",
+        "useThrowNewError": "error",
+        "useThrowOnlyError": "error"
+      },
+      "complexity": {
+        "recommended": true,
+        "noArguments": "error",
+        "noUselessCatch": "error",
+        "noUselessConstructor": "error",
+        "noUselessTernary": "error",
+        "useArrowFunction": "error",
+        "useOptionalChain": "error",
+        "useSimplifiedLogicExpression": "error"
+      },
+      "performance": {
+        "recommended": true,
+        "noAccumulatingSpread": "warn",
+        "noAwaitInLoops": "warn",
+        "useTopLevelRegex": "warn"
+      },
+      "security": {
+        "recommended": true,
+        "noGlobalEval": "error",
+        "noSecrets": "error"
+      },
+      "nursery": {
+        "noFloatingPromises": "warn",
+        "noMisusedPromises": "warn",
+        "noShadow": "warn",
+        "noUnsafePlusOperands": "warn",
+        "useErrorCause": "warn",
+        "useNullishCoalescing": "warn"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["tests/**"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noUnusedFunctionParameters": "warn"
+          },
+          "suspicious": {
+            "noExplicitAny": "warn",
+            "useAwait": "off"
+          },
+          "style": {
+            "noNonNullAssertion": "warn",
+            "useTemplate": "warn"
+          },
+          "performance": {
+            "useTopLevelRegex": "off"
+          },
+          "security": {
+            "noSecrets": "off"
+          }
+        }
+      }
+    }
+  ]
+}
