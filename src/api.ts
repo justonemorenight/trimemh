@@ -21,8 +21,8 @@ import {
   MEMORY_KINDS,
   PROPOSAL_ACTIONS,
   PROPOSAL_STATUSES,
-  VISIBILITY,
 } from "./domain/schema";
+import { ContextSchema, RememberSchema } from "./domain/schemas";
 import { loadConfig } from "./infrastructure/config";
 import {
   GuardrailViolation,
@@ -32,13 +32,11 @@ import {
 } from "./infrastructure/guardrail";
 import { getRateLimiter } from "./infrastructure/rate-limit";
 import { getDb, runMigrations } from "./persistence/db";
-import { embedText } from "./retrieval/embedding-provider";
-import { vectorSearch } from "./retrieval/hybrid";
 import {
   approve,
   approveMemoryLinkProposal,
   forget,
-  hybridRecall,
+  getCodeImpact,
   listAll,
   mcpGet,
   proposals,
@@ -51,36 +49,24 @@ import {
   remember,
   status,
 } from "./service";
+import { renderViewerHtml } from "./viewer";
 
-const RememberSchema = z.object({
-  kind: z.enum(MEMORY_KINDS),
-  text: z.string().min(1).max(CONFIG.zod.maxMemoryText),
-  confidence: z.number().min(0).max(1).optional(),
-  visibility: z.enum(VISIBILITY).optional(),
-  evidence: z.array(EvidenceSchema).optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-  expiresAt: z.string().datetime().optional(),
-});
+// ─── API-specific schema extensions ────────────────────────────────
+// Shared schemas use snake_case (MCP convention).
+// API adds camelCase aliases where needed for REST ergonomics.
 
-const RecallSchema = z.object({
+// API recall: query is optional (vector-only search), uses "vector" alias for embedding
+const ApiRecallSchema = z.object({
   query: z.string().min(1).max(CONFIG.zod.maxQueryLength).optional(),
   vector: z.array(z.number()).optional(),
   mode: z.enum(["fts", "vector", "hybrid"]).default("fts"),
   limit: z.number().int().min(1).max(CONFIG.api.maxListLimit).default(CONFIG.api.defaultListLimit),
 });
 
-const ContextAssembleSchema = z.object({
-  query: z.string().max(CONFIG.zod.maxQueryLength).optional(),
-  open_paths: z.array(z.string().max(CONFIG.zod.maxPathLength)).optional(),
+// Context assembly: shared schema + camelCase aliases
+const ContextAssembleSchema = ContextSchema.extend({
   openPaths: z.array(z.string().max(CONFIG.zod.maxPathLength)).optional(),
-  include_lineage_for_ids: z.array(z.string().max(CONFIG.zod.maxLineageIds)).optional(),
   includeLineageForIds: z.array(z.string().max(CONFIG.zod.maxLineageIds)).optional(),
-  model_context_tokens: z
-    .number()
-    .int()
-    .min(CONFIG.context.minModelTokens)
-    .max(CONFIG.context.maxModelTokens)
-    .optional(),
   modelContextTokens: z
     .number()
     .int()
@@ -89,24 +75,35 @@ const ContextAssembleSchema = z.object({
     .optional(),
 });
 
-const ProposalSchema = z.object({
+// Code impact: API uses query params → z.coerce
+const CodeImpactQuerySchema = z.object({
+  path: z.string().min(1).max(CONFIG.zod.maxPathLength),
+  symbol: z.string().max(CONFIG.zod.maxSymbolLength).optional(),
+  depth: z.coerce.number().int().min(1).max(2).default(1),
+});
+
+// API proposal: shared + camelCase aliases
+const ApiProposalSchema = z.object({
   kind: z.enum(MEMORY_KINDS),
   text: z.string().min(1).max(CONFIG.zod.maxMemoryText),
   action: z.enum(PROPOSAL_ACTIONS).default("create"),
   target_memory_id: z.string().optional(),
   targetMemoryId: z.string().optional(),
   proposed_by: z.string().min(1).max(CONFIG.zod.maxEntityLength).optional(),
+  proposedBy: z.string().min(1).max(CONFIG.zod.maxEntityLength).optional(),
   rationale: z.string().max(CONFIG.zod.maxMemoryRationale).optional(),
   evidence: z.array(EvidenceSchema).optional(),
 });
 
-const DecisionSchema = z.object({
+// API decision: shared + camelCase aliases
+const ApiDecisionSchema = z.object({
   decided_by: z.string().min(1).max(CONFIG.zod.maxEntityLength).optional(),
   decidedBy: z.string().min(1).max(CONFIG.zod.maxEntityLength).optional(),
   note: z.string().max(CONFIG.zod.maxMemoryRationale).optional(),
 });
 
-const LinkProposalSchema = z.object({
+// API link proposal: shared + camelCase aliases
+const ApiLinkProposalSchema = z.object({
   proposal_type: z.enum(["memory_edge", "memory_code_link"]),
   source_memory_id: z.string().optional(),
   sourceMemoryId: z.string().optional(),
@@ -215,11 +212,11 @@ function _parseLimit(value: string | undefined, fallback: number): number {
   return Math.max(1, Math.min(parsed, CONFIG.api.maxListLimit));
 }
 
-function actorFromDecision(input: z.infer<typeof DecisionSchema>, fallback: string): string {
+function actorFromDecision(input: z.infer<typeof ApiDecisionSchema>, fallback: string): string {
   return input.decided_by ?? input.decidedBy ?? fallback;
 }
 
-function targetMemoryId(input: z.infer<typeof ProposalSchema>): string | undefined {
+function targetMemoryId(input: z.infer<typeof ApiProposalSchema>): string | undefined {
   return input.targetMemoryId ?? input.target_memory_id;
 }
 
@@ -238,13 +235,27 @@ function publicResult<T extends { item: MemoryItem }>(
   };
 }
 
+function publicCodeImpact(data: ReturnType<typeof getCodeImpact>) {
+  return {
+    ...data,
+    linked_memories: data.linked_memories.map((entry) => ({
+      ...entry,
+      item: publicMemoryItem(entry.item),
+    })),
+    related_memories: data.related_memories.map((entry) => ({
+      ...entry,
+      item: publicMemoryItem(entry.item),
+    })),
+  };
+}
+
 async function guardedBody<T>(c: Context, schema: z.ZodType<T>): Promise<T> {
   const raw = await c.req.json();
   const guarded = guardRequestPayload({ payload: raw, surface: "api" });
   return schema.parse(guarded);
 }
 
-function assertLinkProposalShape(input: z.infer<typeof LinkProposalSchema>): void {
+function assertLinkProposalShape(input: z.infer<typeof ApiLinkProposalSchema>): void {
   if (input.proposal_type === "memory_edge") {
     const source = input.sourceMemoryId ?? input.source_memory_id;
     const target = input.targetMemoryId ?? input.target_memory_id;
@@ -305,6 +316,8 @@ export function createApi(input: { db: Database; projectId: string }): Hono {
     return c.json({ success: true, project_id: projectId, data });
   });
 
+  app.get("/viewer", (c) => c.html(renderViewerHtml()));
+
   app.get("/api/memories", (c) => {
     const kind = c.req.query("kind");
     const itemStatus = c.req.query("status");
@@ -342,7 +355,7 @@ export function createApi(input: { db: Database; projectId: string }): Hono {
   });
 
   app.post("/api/memories/recall", async (c) => {
-    const body = await guardedBody(c, RecallSchema);
+    const body = await guardedBody(c, ApiRecallSchema);
     const limit = capSearchLimit(body.limit, "api");
 
     if (body.mode === "fts") {
@@ -359,10 +372,8 @@ export function createApi(input: { db: Database; projectId: string }): Hono {
         return jsonError(c, 400, "query or vector is required for vector recall mode.");
       }
       const queryEmbedding =
-        body.vector && body.vector.length > 0
-          ? new Float32Array(body.vector)
-          : embedText(body.query ?? "");
-      const results = vectorSearch(db, projectId, queryEmbedding, limit);
+        body.vector && body.vector.length > 0 ? new Float32Array(body.vector) : undefined;
+      const results = recall(db, projectId, body.query ?? "", limit, "vector", queryEmbedding);
       const data = results.map(publicResult);
       return c.json({ success: true, mode: "vector", count: data.length, data });
     }
@@ -372,8 +383,8 @@ export function createApi(input: { db: Database; projectId: string }): Hono {
         return jsonError(c, 400, "query or vector is required for hybrid recall mode.");
       }
       const queryEmbedding =
-        body.vector && body.vector.length > 0 ? new Float32Array(body.vector) : null;
-      const results = hybridRecall(db, projectId, body.query ?? null, queryEmbedding, limit);
+        body.vector && body.vector.length > 0 ? new Float32Array(body.vector) : undefined;
+      const results = recall(db, projectId, body.query ?? "", limit, "hybrid", queryEmbedding);
       const data = results.map(publicResult);
       return c.json({ success: true, mode: "hybrid", count: data.length, data });
     }
@@ -409,6 +420,21 @@ export function createApi(input: { db: Database; projectId: string }): Hono {
     });
   });
 
+  app.get("/api/code/impact", (c) => {
+    const query = CodeImpactQuerySchema.parse({
+      path: c.req.query("path"),
+      symbol: c.req.query("symbol") || undefined,
+      depth: c.req.query("depth") ?? "1",
+    });
+    const data = getCodeImpact(db, {
+      projectId,
+      path: query.path,
+      symbol: query.symbol,
+      depth: query.depth,
+    });
+    return c.json({ success: true, data: publicCodeImpact(data) });
+  });
+
   app.get("/api/proposals", (c) => {
     const statusFilter = c.req.query("status");
     const parsedStatus = statusFilter ? z.enum(PROPOSAL_STATUSES).parse(statusFilter) : undefined;
@@ -417,7 +443,7 @@ export function createApi(input: { db: Database; projectId: string }): Hono {
   });
 
   app.post("/api/proposals", async (c) => {
-    const body = await guardedBody(c, ProposalSchema);
+    const body = await guardedBody(c, ApiProposalSchema);
     const proposal = propose(db, {
       kind: body.kind,
       text: body.text,
@@ -433,7 +459,7 @@ export function createApi(input: { db: Database; projectId: string }): Hono {
 
   app.post("/api/proposals/:id/approve", async (c) => {
     const raw = await c.req.json().catch(() => ({}));
-    const body = DecisionSchema.parse(guardRequestPayload({ payload: raw, surface: "api" }));
+    const body = ApiDecisionSchema.parse(guardRequestPayload({ payload: raw, surface: "api" }));
     const memory = approve(
       db,
       projectId,
@@ -450,7 +476,7 @@ export function createApi(input: { db: Database; projectId: string }): Hono {
 
   app.post("/api/proposals/:id/reject", async (c) => {
     const raw = await c.req.json().catch(() => ({}));
-    const body = DecisionSchema.parse(guardRequestPayload({ payload: raw, surface: "api" }));
+    const body = ApiDecisionSchema.parse(guardRequestPayload({ payload: raw, surface: "api" }));
     const proposal = reject(
       db,
       projectId,
@@ -462,7 +488,7 @@ export function createApi(input: { db: Database; projectId: string }): Hono {
   });
 
   app.post("/api/links/propose", async (c) => {
-    const body = await guardedBody(c, LinkProposalSchema);
+    const body = await guardedBody(c, ApiLinkProposalSchema);
     assertLinkProposalShape(body);
 
     if (body.proposal_type === "memory_edge") {
@@ -500,7 +526,7 @@ export function createApi(input: { db: Database; projectId: string }): Hono {
 
   app.post("/api/links/:id/approve", async (c) => {
     const raw = await c.req.json().catch(() => ({}));
-    const body = DecisionSchema.parse(guardRequestPayload({ payload: raw, surface: "api" }));
+    const body = ApiDecisionSchema.parse(guardRequestPayload({ payload: raw, surface: "api" }));
     const link = approveMemoryLinkProposal(
       db,
       projectId,
@@ -517,7 +543,7 @@ export function createApi(input: { db: Database; projectId: string }): Hono {
 
   app.post("/api/links/:id/reject", async (c) => {
     const raw = await c.req.json().catch(() => ({}));
-    const body = DecisionSchema.parse(guardRequestPayload({ payload: raw, surface: "api" }));
+    const body = ApiDecisionSchema.parse(guardRequestPayload({ payload: raw, surface: "api" }));
     const proposal = rejectMemoryLinkProposal(
       db,
       projectId,

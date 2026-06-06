@@ -19,13 +19,7 @@ import type { MemoryItem } from "../domain/schema";
 import { guardXmlPayload } from "../infrastructure/guardrail";
 import type { MemoryContentType, RenderedContent } from "./content-sniffers";
 import { detectContentTypeForItem } from "./content-sniffers";
-import {
-  renderCode,
-  renderConfig,
-  renderDiff,
-  renderJson,
-  renderLog,
-} from "./content-renderers";
+import { renderCode, renderConfig, renderDiff, renderJson, renderLog } from "./content-renderers";
 
 // Re-export types and detection functions
 export type { MemoryContentType, ContentMatch, RenderedContent } from "./content-sniffers";

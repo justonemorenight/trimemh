@@ -3,7 +3,7 @@ import { Command } from "commander";
 import { loadConfig } from "../infrastructure/config";
 import { formatConfigAsJSON, generateMCPConfig } from "../mcp/config-gen";
 import { startMcpServer } from "../mcp/server";
-import { closeDb, getDb, runMigrations } from "../persistence/db";
+import { getDb, runMigrations } from "../persistence/db";
 
 export function registerMcpCommands(program: Command): void {
   program
@@ -32,7 +32,7 @@ export function registerMcpCommands(program: Command): void {
           const generated = generateMCPConfig(memhConfig, "generic");
           console.log(formatConfigAsJSON(generated));
           console.error("\n[triMemh] Add this to your MCP client config.");
-          console.error("[triMemh] Or run 'tritrimemh install' for automatic setup.\n");
+          console.error("[triMemh] Or run 'trimemh install' for automatic setup.\n");
         }),
     );
 }

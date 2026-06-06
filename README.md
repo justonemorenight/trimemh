@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/bun-%3E%3D1.0.0-f9f1e4?logo=bun&logoColor=white" alt="Bun">
-  <img src="https://img.shields.io/badge/tests-346%20pass-success" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-349%20pass-success" alt="Tests">
   <img src="https://img.shields.io/badge/compression-93%25-brightgreen" alt="Compression">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License">
   <img src="https://img.shields.io/badge/local--first-100%25-orange" alt="Local-first">
@@ -216,6 +216,13 @@ trimemh learn <session-log>            # Mine failures & suggest fixes
 trimemh learn --auto-approve           # Auto-apply low-risk corrections
 trimemh learn --dry-run                # Preview without applying
 
+# ── Code Intelligence ────────────────────
+trimemh scan                           # Scan project codebase & index code entities
+trimemh scan --seed                    # Scan + auto-generate project overview memories
+trimemh scan --dry-run                 # Parse and report without persisting
+trimemh scan --path <subdir>           # Scan a specific subdirectory
+trimemh scan --max-files <number>      # Limit files scanned (default 200)
+
 # ── Diagnostics ──────────────────────────
 trimemh dedup --scan --threshold=0.85  # Scan for semantic duplicates
 trimemh related <id>                   # Find related memories via graph
@@ -224,90 +231,166 @@ trimemh benchmark                      # Run token compression benchmark
 
 ## MCP Tools
 
-triMemh exposes 11 MCP tools that agents use automatically:
+triMemh exposes 15 MCP tools that agents use automatically:
 
 | Tool | Description | Example |
 |---|---|---|
 | `memory_search` | FTS5 / vector / hybrid RRF search | `memory_search("auth bug fix", mode="hybrid")` |
 | `memory_context` | Get compressed context XML | Called automatically each turn |
 | `memory_propose` | Propose new memory (governance-gated) | `memory_propose("JWT tokens expire...", kind="mistake")` |
+| `memory_list_proposals` | List pending proposals for review | `memory_list_proposals(status="pending")` |
+| `memory_approve` | Approve a pending memory proposal | `memory_approve("prop_abc123")` |
+| `memory_reject` | Reject a pending memory proposal | `memory_reject("prop_abc123", note="duplicate")` |
 | `memory_get` | Get full memory detail | `memory_get("mem_abc123")` |
 | `memory_retrieve` | **CCR**: fetch original of compressed memory | `memory_retrieve("trimemh:mem_abc123")` |
 | `memory_feedback` | Rate memory usefulness (improves scoring) | `memory_feedback("mem_abc123", useful=true)` |
 | `memory_related` | Find related memories via graph edges | `memory_related("mem_abc123")` |
 | `memory_stats` | Memory usage statistics | `memory_stats()` |
 | `memory_code_search` | Search by file path or symbol | `memory_code_search(path="src/auth.ts")` |
+| `memory_code_impact` | Memory-backed impact radius for a code path | `memory_code_impact(path="src/auth.ts", depth=2)` |
 | `memory_link_propose` | Propose link between memories | `memory_link_propose(source, target, relation="related_to")` |
 | `memory_code_link_propose` | Propose memory ↔ code entity link | `memory_code_link_propose("mem_abc", "src/auth.ts")` |
+
+## REST API
+
+triMemh ships with a built-in Hono HTTP server exposing 15 REST endpoints. The API uses strict JSON validation, Zod schemas, rate limiting, and guardrail enforcement.
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/status` | Memory system statistics |
+| `GET` | `/api/memories` | List all active memories (optional `?kind=&status=`) |
+| `GET` | `/api/memories/:id` | Get a single memory by ID |
+| `POST` | `/api/memories/remember` | Direct-write a memory (governance-gated) |
+| `DELETE` | `/api/memories/:id` | Archive a memory |
+| `POST` | `/api/memories/recall` | Full-text / vector / hybrid search |
+| `POST` | `/api/context/assemble` | Compressed context XML assembly |
+| `GET` | `/api/code/impact` | Memory impact radius for a code path |
+| `GET` | `/api/proposals` | List proposals (optional `?status=`) |
+| `POST` | `/api/proposals` | Create a new memory proposal |
+| `POST` | `/api/proposals/:id/approve` | Approve a proposal |
+| `POST` | `/api/proposals/:id/reject` | Reject a proposal |
+| `POST` | `/api/links/propose` | Propose memory edge or code link |
+| `POST` | `/api/links/:id/approve` | Approve a link proposal |
+| `POST` | `/api/links/:id/reject` | Reject a link proposal |
+| `GET` | `/viewer` | Built-in memory viewer HTML page |
+
+```bash
+# Start the API server
+bun run --watch src/api.ts
+# → http://localhost:2024
+# → Viewer at http://localhost:2024/viewer
+```
+
+## Memory Viewer
+
+A built-in browser-based memory viewer is available at `/viewer` when the API server is running. It provides a clean dashboard for browsing memories, inspecting graph relationships, and reviewing pending proposals — no external tools required.
 
 ## Architecture
 
 ```
 src/
-├── cli/                CLI interface
-│   ├── install-command   Auto-detect 5 AI agents + MCP config
-│   ├── learn-command     Session mining entry point
-│   └── tui.ts            Terminal UI (WIP)
+├── api.ts                 Hono HTTP REST API (15 endpoints)
+├── cli.ts                 CLI entry point (commander)
+├── config.ts              Global constants & limits
+├── service.ts             Service barrel — re-exports from sub-modules
+├── viewer.ts              Built-in memory viewer HTML page
 │
-├── context/            Compression pipeline (ContentRouter → CCR → CacheAligner)
-│   ├── ccr.ts             Reversible Context Compression (3-level)
-│   ├── code-compressor.ts TypeScript AST compressor (tree-sitter)
-│   ├── compiler.ts        CacheAligner stable prefix + smart rendering
-│   ├── content-router.ts  6-type content detection + per-type renderers
-│   ├── context-runtime.ts Turn-based context assembly
-│   └── chunking.ts        AST-aware text chunking
+├── application/         Use-case orchestrations
+│   ├── dedup-use-cases.ts  Dedup scan + merge logic
+│   ├── index-use-cases.ts  Project scanning & code indexing
+│   ├── project-seed.ts     Auto-generate project overview memories
+│   ├── recall-use-cases.ts Hybrid recall + code-path memory lookup
+│   └── service-helpers.ts  Shared helpers for service layer
 │
-├── retrieval/          Search, scoring & embeddings
-│   ├── embedding-provider  LocalHash (zero-dep) + ONNX MiniLM
-│   ├── hybrid.ts          RRF fusion (FTS5 + sqlite-vec ANN)
-│   ├── query-expansion.ts 60+ domain synonym pairs + negation handling
-│   ├── reranker.ts        Cross-encoder fallback (keyword × phrase × entity)
-│   ├── scoring.ts         9-factor Engram-inspired retrieval scoring
-│   ├── feedback.ts        EMA-based agent feedback loop (α=0.15)
-│   ├── dedup.ts           Per-kind semantic dedup thresholds
-│   └── cross-agent.ts     Cross-agent provenance + dedup
+├── cli/                 CLI commands
+│   ├── install-command.ts  Auto-detect 5 AI agents + MCP config
+│   ├── learn-command.ts    Session mining entry point
+│   ├── context-command.ts  Context assembly CLI
+│   ├── dedup-command.ts    Semantic dedup scan CLI
+│   ├── graph-commands.ts   Memory graph explore CLI
+│   ├── mcp-commands.ts     MCP serve & config CLI
+│   ├── memory-commands.ts  Remember, search, list, forget
+│   ├── proposal-commands.ts Propose, approve, reject
+│   └── tui.ts              Terminal UI (WIP)
 │
-├── mcp/                MCP server implementation
-│   ├── server.ts          StdioServerTransport bootstrap
-│   ├── tools.ts           11 tool registrations + rate limiting
-│   ├── schemas.ts         Zod input schemas for all tools
-│   ├── config-gen.ts      5-target MCP config generator
-│   ├── transport.ts       Streamable HTTP transport
-│   └── runtime.ts         Rate limit enforcement
+├── service/             Service sub-modules
+│   ├── memory-service.ts   CRUD operations (remember, forget, list)
+│   ├── proposal-service.ts Proposal lifecycle (propose, approve, reject)
+│   ├── mcp-service.ts      MCP-facing search & retrieval wrappers
+│   ├── graph-service.ts    Memory graph + code-link CRUD & traversal
+│   ├── auto-approval.ts    Risk-based auto-approval rules
+│   └── helpers.ts          Shared service utilities
 │
-├── persistence/        Storage layer
-│   ├── db.ts              SQLite bootstrap + migrations + sqlite-vec
-│   └── repository.ts      Full CRUD + FTS5 + vector operations
+├── context/             Compression pipeline (ContentRouter → CCR → CacheAligner)
+│   ├── ccr.ts              Reversible Context Compression (3-level)
+│   ├── code-compressor.ts  TypeScript AST compressor (tree-sitter)
+│   ├── compiler.ts         CacheAligner stable prefix + smart rendering
+│   ├── content-router.ts   6-type content detection orchestrator
+│   ├── content-sniffers.ts Per-type content detectors
+│   ├── content-renderers.ts Per-type compressed renderers
+│   ├── context-runtime.ts  Turn-based context assembly
+│   └── chunking.ts         AST-aware text chunking
 │
-├── governance/         Safety & compliance
-│   └── index.ts           RBAC + approval policies + override detection
+├── retrieval/           Search, scoring & embeddings
+│   ├── embedding-provider.ts LocalHash (zero-dep) + ONNX MiniLM
+│   ├── embedding.ts         Embedding generation helpers
+│   ├── hybrid.ts            RRF fusion (FTS5 + sqlite-vec ANN)
+│   ├── vector.ts            sqlite-vec vector store operations
+│   ├── query-expansion.ts   60+ domain synonym pairs + negation handling
+│   ├── reranker.ts          Cross-encoder fallback (keyword × phrase × entity)
+│   ├── scoring.ts           9-factor Engram-inspired retrieval scoring
+│   ├── feedback.ts          EMA-based agent feedback loop (α=0.15)
+│   ├── dedup.ts             Per-kind semantic dedup thresholds
+│   └── cross-agent.ts       Cross-agent provenance + dedup
 │
-├── learning/           Self-improvement
-│   └── learn.ts           Failure pattern detection (4 types) + correction
+├── mcp/                 MCP server implementation
+│   ├── server.ts            StdioServerTransport bootstrap
+│   ├── tools.ts             15 tool registrations + rate limiting
+│   ├── schemas.ts           Zod input schemas for all tools
+│   ├── config-gen.ts        5-target MCP config generator
+│   ├── transport.ts         Streamable HTTP transport
+│   └── runtime.ts           Rate limit enforcement + stdin payload limits
 │
-├── infrastructure/     Cross-cutting
-│   ├── config.ts          Global config (paths, env, defaults)
-│   ├── guardrail.ts       Input/output sanitization + API key redaction
-│   ├── sanitize.ts        Text normalization utilities
-│   ├── rate-limit.ts      Token-bucket rate limiter
-│   ├── logging.ts         Structured JSON logger
-│   └── cache.ts           LRU result cache
+├── persistence/         Storage layer
+│   ├── db.ts                SQLite bootstrap + migrations + sqlite-vec
+│   ├── migrations.ts        Schema migration definitions
+│   ├── memory-repo.ts       Memory row CRUD + FTS5
+│   ├── proposal-repo.ts     Proposal row CRUD
+│   ├── graph-repo.ts        Memory graph edges CRUD
+│   ├── code-link-repo.ts    Memory ↔ code link CRUD
+│   ├── repository.ts        Unified repository (backward-compat)
+│   └── repository-mappers.ts Row ↔ domain mapping utilities
 │
-├── sdk/                Framework integrations
-│   ├── anthropic.ts       Anthropic SDK middleware
-│   ├── claude-agent.ts    Claude Agent SDK integration
-│   ├── vercel.ts          Vercel AI SDK middleware
-│   ├── client.ts          HTTP client for remote servers
-│   ├── context.ts         SDK context helpers
-│   └── prompt.ts          Prompt prefix injection
+├── governance/          Safety & compliance
+│   └── index.ts             RBAC + approval policies + override detection
 │
-├── code-intel/         Code intelligence
-│   ├── code-parser.ts     Tree-sitter multi-language parser
-│   ├── file-watcher.ts    FS watcher with debounce + auto-index
-│   └── git-integration.ts Git history context provider
+├── learning/            Self-improvement
+│   └── learn.ts             Failure pattern detection (4 types) + correction
 │
-└── domain/             Shared types
-    └── schema.ts          TypeScript interfaces, enums, constants
+├── infrastructure/      Cross-cutting
+│   ├── config.ts            Global config (paths, env, defaults)
+│   ├── guardrail.ts         Input/output sanitization + API key redaction
+│   ├── sanitize.ts          Text normalization utilities
+│   ├── rate-limit.ts        Token-bucket rate limiter
+│   ├── logging.ts           Structured JSON logger
+│   └── cache.ts             LRU result cache
+│
+├── sdk/                 Framework integrations
+│   ├── index.ts             SDK barrel exports
+│   ├── anthropic.ts         Anthropic SDK middleware
+│   ├── claude-agent.ts      Claude Agent SDK integration
+│   ├── vercel.ts            Vercel AI SDK middleware
+│   ├── client.ts            HTTP client for remote servers
+│   ├── context.ts           SDK context helpers
+│   └── prompt.ts            Prompt prefix injection
+│
+├── code-intel/          Code intelligence
+│   ├── code-parser.ts       Tree-sitter multi-language parser
+│   ├── file-watcher.ts      FS watcher with debounce + auto-index
+│   └── git-integration.ts   Git history context provider
+│
+└── domain/              Shared types
+    └── schema.ts            TypeScript interfaces, enums, constants
 ```
 
 ## Design Principles
@@ -362,7 +445,7 @@ triMemh stores its database at `.trimemh/memory.db` in your project root. Config
 | **Reversible detail** | Compressed context includes retrieval handles | Original memory text stays locally retrievable |
 | **Agent feedback loop** | EMA usefulness scoring | Useful memories rise; stale memories decay |
 | **Cross-agent memory** | Shared project memory across installed agents | Provenance and dedup keep context coherent |
-| **MCP integration** | Agent-facing tool surface | 11 MCP tools |
+| **MCP integration** | Agent-facing tool surface | 15 MCP tools |
 | **HTTP hardening** | Origin validation + strict JSON content type | Browser-simple CSRF POSTs rejected with 415 |
 | **Write throughput** | WAL + batched local persistence path | 2,455 writes/s on populated DB; 513 writes/s sequential |
 
@@ -372,7 +455,7 @@ triMemh stores its database at `.trimemh/memory.db` in your project root. Config
 git clone https://github.com/justonemorenight/trimemh.git
 cd tri-memory
 bun install
-bun test                  # 346 tests, 0 failures
+bun test                  # 349 tests, 0 failures
 bun run scripts/benchmark.ts        # Token compression benchmark
 bun run scripts/bench-realworld.ts  # Latency & throughput benchmark
 bun run scripts/bench-retrieval.ts  # Retrieval quality benchmark
@@ -390,12 +473,15 @@ bun run scripts/bench-retrieval.ts  # Retrieval quality benchmark
 - [x] Agent feedback loop — EMA scoring
 - [x] Session mining — `trimemh learn`
 - [x] Cross-agent shared context
-- [x] Governance — RBAC + approval flow
-- [x] MCP server — 11 tools
+- [x] Governance — RBAC + approval flow + proposal review tools
+- [x] MCP server — 15 tools (search, context, propose, approve, reject, feedback, graph, code impact…)
 - [x] CLI install — auto-detect 5 AI agents
+- [x] CLI scan — codebase scanning + code entity indexing
+- [x] REST API — 15 HTTP endpoints via Hono
+- [x] Streamable HTTP transport — MCP over HTTP with CSRF hardening
+- [x] Memory viewer — built-in browser dashboard
 - [ ] TUI — terminal dashboard
 - [ ] Multi-language AST — Python, Go, Rust
-- [ ] Streamable HTTP transport
 - [ ] Team-level shared memory server
 
 ## Contributing

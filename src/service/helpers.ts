@@ -2,7 +2,6 @@ import type { Database } from "bun:sqlite";
 
 import type { MemoryItem } from "../domain/schema";
 import { CONFIG } from "../config";
-import { dedupCheckAndMerge } from "../application/dedup-use-cases";
 import { audit, embeddingForText, guardedPayload, json, now } from "../application/service-helpers";
 import { getMemoriesWithEmbeddings } from "../persistence/repository";
 import {

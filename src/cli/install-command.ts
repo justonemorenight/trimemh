@@ -368,7 +368,10 @@ export function printPostInstall(agents: AgentDefinition[]): void {
   for (const agent of agents) {
     console.log(`  ${D}${DOT}${N} ${agent.icon} ${agent.name}: ${agent.postInstall}`);
   }
-  console.log(`\n  ${D}Verify:${N} Start your agent and ask "what MCP tools are available?"`);
-  console.log(`  ${D}Test:${N}   Ask your agent to "search memories about authentication"`);
+  console.log(
+    `\n  ${D}Initialize:${N} Run 'trimemh init' to create the memory DB and scan your codebase`,
+  );
+  console.log(`  ${D}Verify:${N}     Start your agent and ask "what MCP tools are available?"`);
+  console.log(`  ${D}Test:${N}       Ask your agent to "search memories about authentication"`);
   console.log();
 }

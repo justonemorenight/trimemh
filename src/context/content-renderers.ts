@@ -14,7 +14,7 @@ import type { MemoryItem } from "../domain/schema";
 import { guardXmlPayload } from "../infrastructure/guardrail";
 import { truncateWords } from "../infrastructure/sanitize";
 import { compressCodeWithAst } from "./code-compressor";
-import type { MemoryContentType, RenderedContent } from "./content-sniffers";
+import type { RenderedContent } from "./content-sniffers";
 
 // ─── Code renderer ──────────────────────────────────────────────────
 
@@ -58,7 +58,9 @@ export function renderCode(item: MemoryItem): RenderedContent {
       // biome-ignore lint/performance/useTopLevelRegex: warning suppression
       /^(import |export |from |require\()/.test(trimmed) ||
       // biome-ignore lint/performance/useTopLevelRegex: warning suppression
-      /^(pub )?(async )?(function |class |def |fn |struct |enum |interface |type |const |impl |module )/.test(trimmed) ||
+      /^(pub )?(async )?(function |class |def |fn |struct |enum |interface |type |const |impl |module )/.test(
+        trimmed,
+      ) ||
       // biome-ignore lint/performance/useTopLevelRegex: warning suppression
       /^(protected |private |public |static |abstract |final |override )/.test(trimmed) ||
       // biome-ignore lint/performance/useTopLevelRegex: warning suppression
@@ -150,9 +152,7 @@ function extractPattern(normalized: string): string {
     .trim();
 }
 
-function renderShortErrorSignature(
-  normalized: NormalizedLine[],
-): RenderedContent | null {
+function renderShortErrorSignature(normalized: NormalizedLine[]): RenderedContent | null {
   if (normalized.length === 0 || normalized.length > 80) {
     return null;
   }

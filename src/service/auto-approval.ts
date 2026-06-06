@@ -218,10 +218,7 @@ function resolveRequireApprovalEnv(): RiskLevel | null {
   return null;
 }
 
-function envOverrideDecision(
-  risk: RiskLevel,
-  overrideThreshold: RiskLevel,
-): AutoApproveDecision {
+function envOverrideDecision(risk: RiskLevel, overrideThreshold: RiskLevel): AutoApproveDecision {
   // TRIMEMH_REQUIRE_APPROVAL takes precedence as a ceiling
   const requireApprovalFrom = resolveRequireApprovalEnv();
   if (requireApprovalFrom && riskOrderIndex(risk) >= riskOrderIndex(requireApprovalFrom)) {

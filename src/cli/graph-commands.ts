@@ -1,8 +1,6 @@
 import { Command } from "commander";
 
 import type { CodeEntityType, CodeLinkRelation, MemoryEdgeRelation } from "../domain/schema";
-import { loadConfig } from "../infrastructure/config";
-import { closeDb, getDb, runMigrations } from "../persistence/db";
 import {
   approveMemoryLinkProposal,
   createMemoryCodeLink,
@@ -13,6 +11,7 @@ import {
   proposeMemoryEdge,
   rejectMemoryLinkProposal,
 } from "../service";
+import { withDb } from "./with-db";
 
 export function registerGraphCommands(program: Command): void {
   const linkCommand = new Command("link").description("Create or review memory graph/code links");
@@ -40,18 +39,16 @@ function registerLinkMemoryCommand(linkCommand: Command): void {
     .command("memory")
     .description("Create a direct memory-to-memory edge")
     .argument("<source-id>", "Source memory ID")
-    .argument("<relation>", "supports, contradicts, depends_on, derived_from, supersedes, relates_to")
+    .argument(
+      "<relation>",
+      "supports, contradicts, depends_on, derived_from, supersedes, relates_to",
+    )
     .argument("<target-id>", "Target memory ID")
     .option("--rationale <text>", "Why this link exists")
     .option("--confidence <number>", "Confidence 0-1", "0.5")
     .option("--db <path>", "Custom database path")
-    // biome-ignore lint/suspicious/useAwait: warning suppression
-    .action(async (sourceId, relation, targetId, opts) => {
-      const config = loadConfig();
-      const dbPath = opts.db ?? config.dbPath;
-      const db = getDb(dbPath);
-      runMigrations(db);
-      try {
+    .action(
+      withDb((db, config, sourceId, relation, targetId, opts) => {
         const edge = createMemoryEdge(db, {
           projectId: config.projectId,
           sourceMemoryId: sourceId,
@@ -63,12 +60,8 @@ function registerLinkMemoryCommand(linkCommand: Command): void {
         });
         console.log(`[triMemh] Memory edge created: ${edge.id}`);
         console.log(`  ${edge.source_memory_id} --${edge.relation}--> ${edge.target_memory_id}`);
-      } catch (err: unknown) {
-        console.error(`[triMemh] Error: ${(err as Error).message}`);
-        process.exit(1);
-      }
-      closeDb();
-    });
+      }),
+    );
 }
 
 // ─── link code ────────────────────────────────────────────────────
@@ -92,13 +85,8 @@ function registerLinkCodeCommand(linkCommand: Command): void {
     .option("--rationale <text>", "Why this link exists")
     .option("--confidence <number>", "Confidence 0-1", "0.5")
     .option("--db <path>", "Custom database path")
-    // biome-ignore lint/suspicious/useAwait: warning suppression
-    .action(async (memoryId, path, opts) => {
-      const config = loadConfig();
-      const dbPath = opts.db ?? config.dbPath;
-      const db = getDb(dbPath);
-      runMigrations(db);
-      try {
+    .action(
+      withDb((db, config, memoryId, path, opts) => {
         const link = createMemoryCodeLink(db, {
           projectId: config.projectId,
           memoryId,
@@ -117,12 +105,8 @@ function registerLinkCodeCommand(linkCommand: Command): void {
         console.log(`  memory: ${link.memory_id}`);
         console.log(`  entity: ${link.entity_id}`);
         console.log(`  relation: ${link.relation}`);
-      } catch (err: unknown) {
-        console.error(`[triMemh] Error: ${(err as Error).message}`);
-        process.exit(1);
-      }
-      closeDb();
-    });
+      }),
+    );
 }
 
 // ─── link propose-memory ──────────────────────────────────────────
@@ -132,19 +116,17 @@ function registerLinkProposeMemoryCommand(linkCommand: Command): void {
     .command("propose-memory")
     .description("Create a pending memory-to-memory edge proposal")
     .argument("<source-id>", "Source memory ID")
-    .argument("<relation>", "supports, contradicts, depends_on, derived_from, supersedes, relates_to")
+    .argument(
+      "<relation>",
+      "supports, contradicts, depends_on, derived_from, supersedes, relates_to",
+    )
     .argument("<target-id>", "Target memory ID")
     .requiredOption("--rationale <text>", "Why this link should exist")
     .option("--by <source>", "Who proposed this", "cli:user")
     .option("--confidence <number>", "Confidence 0-1", "0.5")
     .option("--db <path>", "Custom database path")
-    // biome-ignore lint/suspicious/useAwait: warning suppression
-    .action(async (sourceId, relation, targetId, opts) => {
-      const config = loadConfig();
-      const dbPath = opts.db ?? config.dbPath;
-      const db = getDb(dbPath);
-      runMigrations(db);
-      try {
+    .action(
+      withDb((db, config, sourceId, relation, targetId, opts) => {
         const proposal = proposeMemoryEdge(db, {
           projectId: config.projectId,
           sourceMemoryId: sourceId,
@@ -157,12 +139,8 @@ function registerLinkProposeMemoryCommand(linkCommand: Command): void {
         console.log(`[triMemh] Link proposal created: ${proposal.id}`);
         console.log(`  type: ${proposal.proposal_type}`);
         console.log(`  status: ${proposal.status}`);
-      } catch (err: unknown) {
-        console.error(`[triMemh] Error: ${(err as Error).message}`);
-        process.exit(1);
-      }
-      closeDb();
-    });
+      }),
+    );
 }
 
 // ─── link propose-code ────────────────────────────────────────────
@@ -187,13 +165,8 @@ function registerLinkProposeCodeCommand(linkCommand: Command): void {
     .option("--by <source>", "Who proposed this", "cli:user")
     .option("--confidence <number>", "Confidence 0-1", "0.5")
     .option("--db <path>", "Custom database path")
-    // biome-ignore lint/suspicious/useAwait: warning suppression
-    .action(async (memoryId, path, opts) => {
-      const config = loadConfig();
-      const dbPath = opts.db ?? config.dbPath;
-      const db = getDb(dbPath);
-      runMigrations(db);
-      try {
+    .action(
+      withDb((db, config, memoryId, path, opts) => {
         const proposal = proposeMemoryCodeLink(db, {
           projectId: config.projectId,
           memoryId,
@@ -211,12 +184,8 @@ function registerLinkProposeCodeCommand(linkCommand: Command): void {
         console.log(`[triMemh] Link proposal created: ${proposal.id}`);
         console.log(`  type: ${proposal.proposal_type}`);
         console.log(`  status: ${proposal.status}`);
-      } catch (err: unknown) {
-        console.error(`[triMemh] Error: ${(err as Error).message}`);
-        process.exit(1);
-      }
-      closeDb();
-    });
+      }),
+    );
 }
 
 // ─── link approve ─────────────────────────────────────────────────
@@ -227,22 +196,13 @@ function registerLinkApproveCommand(linkCommand: Command): void {
     .description("Approve a pending memory link proposal")
     .argument("<proposal-id>", "Link proposal ID")
     .option("--db <path>", "Custom database path")
-    // biome-ignore lint/suspicious/useAwait: warning suppression
-    .action(async (proposalId, opts) => {
-      const config = loadConfig();
-      const dbPath = opts.db ?? config.dbPath;
-      const db = getDb(dbPath);
-      runMigrations(db);
-      try {
+    .action(
+      withDb((db, config, proposalId, _opts) => {
         const created = approveMemoryLinkProposal(db, config.projectId, proposalId, "user");
         console.log(`[triMemh] Link proposal approved: ${proposalId}`);
         console.log(`  created: ${created.id}`);
-      } catch (err: unknown) {
-        console.error(`[triMemh] Error: ${(err as Error).message}`);
-        process.exit(1);
-      }
-      closeDb();
-    });
+      }),
+    );
 }
 
 // ─── link reject ──────────────────────────────────────────────────
@@ -254,13 +214,8 @@ function registerLinkRejectCommand(linkCommand: Command): void {
     .argument("<proposal-id>", "Link proposal ID")
     .option("--note <text>", "Reason for rejection", "Rejected by user")
     .option("--db <path>", "Custom database path")
-    // biome-ignore lint/suspicious/useAwait: warning suppression
-    .action(async (proposalId, opts) => {
-      const config = loadConfig();
-      const dbPath = opts.db ?? config.dbPath;
-      const db = getDb(dbPath);
-      runMigrations(db);
-      try {
+    .action(
+      withDb((db, config, proposalId, opts) => {
         const rejected = rejectMemoryLinkProposal(
           db,
           config.projectId,
@@ -270,12 +225,8 @@ function registerLinkRejectCommand(linkCommand: Command): void {
         );
         console.log(`[triMemh] Link proposal rejected: ${rejected.id}`);
         console.log(`  note: ${rejected.decision_note}`);
-      } catch (err: unknown) {
-        console.error(`[triMemh] Error: ${(err as Error).message}`);
-        process.exit(1);
-      }
-      closeDb();
-    });
+      }),
+    );
 }
 
 // ─── related ──────────────────────────────────────────────────────
@@ -287,14 +238,14 @@ function registerRelatedCommand(program: Command): void {
     .argument("<memory-id>", "Memory ID")
     .option("--depth <number>", "Traversal depth, capped at 2", "1")
     .option("--db <path>", "Custom database path")
-    // biome-ignore lint/suspicious/useAwait: warning suppression
-    .action(async (memoryId, opts) => {
-      const config = loadConfig();
-      const dbPath = opts.db ?? config.dbPath;
-      const db = getDb(dbPath);
-      runMigrations(db);
-      try {
-        const related = getRelatedMemories(db, config.projectId, memoryId, parseInt(opts.depth, 10));
+    .action(
+      withDb((db, config, memoryId, opts) => {
+        const related = getRelatedMemories(
+          db,
+          config.projectId,
+          memoryId,
+          parseInt(opts.depth, 10),
+        );
         if (related.length === 0) {
           console.log("[triMemh] No related memories found.");
         } else {
@@ -305,12 +256,8 @@ function registerRelatedCommand(program: Command): void {
             console.log(`  ${r.item.text.slice(0, 120)}${r.item.text.length > 120 ? "…" : ""}`);
           }
         }
-      } catch (err: unknown) {
-        console.error(`[triMemh] Error: ${(err as Error).message}`);
-        process.exit(1);
-      }
-      closeDb();
-    });
+      }),
+    );
 }
 
 // ─── code memories ────────────────────────────────────────────────
@@ -322,23 +269,19 @@ function registerCodeMemoriesCommand(codeCommand: Command): void {
     .argument("<path>", "Code file path")
     .option("--symbol <symbol>", "Function/class/module symbol")
     .option("--db <path>", "Custom database path")
-    // biome-ignore lint/suspicious/useAwait: warning suppression
-    .action(async (path, opts) => {
-      const config = loadConfig();
-      const dbPath = opts.db ?? config.dbPath;
-      const db = getDb(dbPath);
-      runMigrations(db);
-      const results = getMemoriesForCode(db, config.projectId, path, opts.symbol);
-      if (results.length === 0) {
-        console.log("[triMemh] No code-linked memories found.");
-      } else {
-        for (const r of results) {
-          console.log(
-            `${r.item.id.slice(0, 8)} | ${r.link.relation} | ${r.entity.path}${r.entity.symbol ? `#${r.entity.symbol}` : ""}`,
-          );
-          console.log(`  ${r.item.text.slice(0, 120)}${r.item.text.length > 120 ? "…" : ""}`);
+    .action(
+      withDb((db, config, path, opts) => {
+        const results = getMemoriesForCode(db, config.projectId, path, opts.symbol);
+        if (results.length === 0) {
+          console.log("[triMemh] No code-linked memories found.");
+        } else {
+          for (const r of results) {
+            console.log(
+              `${r.item.id.slice(0, 8)} | ${r.link.relation} | ${r.entity.path}${r.entity.symbol ? `#${r.entity.symbol}` : ""}`,
+            );
+            console.log(`  ${r.item.text.slice(0, 120)}${r.item.text.length > 120 ? "…" : ""}`);
+          }
         }
-      }
-      closeDb();
-    });
+      }),
+    );
 }

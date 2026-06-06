@@ -2,9 +2,8 @@ import { readFileSync } from "node:fs";
 
 import type { Command } from "commander";
 
-import { loadConfig } from "../infrastructure/config";
 import { applyLearnings, mineFailures } from "../learning/learn";
-import { closeDb, getDb, runMigrations } from "../persistence/db";
+import { withDb } from "./with-db";
 
 export function registerLearnCommand(program: Command): void {
   program
@@ -24,55 +23,48 @@ export function registerLearnCommand(program: Command): void {
     .option("--max-corrections <number>", "Max corrections to propose", "10")
     .option("--dry-run", "Analyze but don't apply any corrections")
     .option("--db <path>", "Custom database path")
-    // biome-ignore lint/suspicious/useAwait: warning suppression
-    .action(async (file, opts) => {
-      const config = loadConfig();
-      const dbPath = opts.db ?? config.dbPath;
-      const db = getDb(dbPath);
-      runMigrations(db);
+    .action(
+      withDb((db, config, file, opts) => {
+        let raw: string;
+        try {
+          raw = readFileSync(file, "utf-8");
+        } catch {
+          console.error(`[triMemh] Cannot read file: ${file}`);
+          process.exit(1);
+        }
 
-      let raw: string;
-      try {
-        raw = readFileSync(file, "utf-8");
-      } catch {
-        console.error(`[triMemh] Cannot read file: ${file}`);
-        closeDb();
-        process.exit(1);
-      }
+        const result = mineFailures(raw, {
+          autoApproveUpTo: opts.autoApprove,
+          minConfidence: parseFloat(opts.minConfidence),
+          maxCorrections: parseInt(opts.maxCorrections, 10),
+        });
 
-      const result = mineFailures(raw, {
-        autoApproveUpTo: opts.autoApprove,
-        minConfidence: parseFloat(opts.minConfidence),
-        maxCorrections: parseInt(opts.maxCorrections, 10),
-      });
+        console.log("[triMemh] Session analysis complete:");
+        console.log(`  Failures detected: ${result.failuresDetected}`);
+        console.log(`  Corrections proposed: ${result.correctionsProposed}`);
 
-      console.log("[triMemh] Session analysis complete:");
-      console.log(`  Failures detected: ${result.failuresDetected}`);
-      console.log(`  Corrections proposed: ${result.correctionsProposed}`);
+        for (const correction of result.corrections) {
+          console.log(
+            `\n  [${correction.risk.toUpperCase()}] ${correction.action}: ${correction.proposedText.slice(0, 100)}...`,
+          );
+          console.log(`    Rationale: ${correction.rationale}`);
+        }
 
-      for (const correction of result.corrections) {
+        if (opts.dryRun) {
+          console.log("\n[triMemh] Dry run — no corrections applied.");
+          return;
+        }
+
+        const applied = applyLearnings(db, config.projectId, result, {
+          autoApproveUpTo: opts.autoApprove,
+        });
+
         console.log(
-          `\n  [${correction.risk.toUpperCase()}] ${correction.action}: ${correction.proposedText.slice(0, 100)}...`,
+          `\n[triMemh] Applied: ${applied.applied} auto-approved, ${applied.proposed} pending approval.`,
         );
-        console.log(`    Rationale: ${correction.rationale}`);
-      }
-
-      if (opts.dryRun) {
-        console.log("\n[triMemh] Dry run — no corrections applied.");
-        closeDb();
-        return;
-      }
-
-      const applied = applyLearnings(db, config.projectId, result, {
-        autoApproveUpTo: opts.autoApprove,
-      });
-
-      console.log(
-        `\n[triMemh] Applied: ${applied.applied} auto-approved, ${applied.proposed} pending approval.`,
-      );
-      if (applied.proposed > 0) {
-        console.log("[triMemh] Review pending proposals with: trimemh proposals");
-      }
-      closeDb();
-    });
+        if (applied.proposed > 0) {
+          console.log("[triMemh] Review pending proposals with: trimemh proposals");
+        }
+      }),
+    );
 }

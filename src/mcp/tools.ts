@@ -18,6 +18,7 @@ import { embedText } from "../retrieval/embedding-provider";
 import { applyFeedback } from "../retrieval/feedback";
 import {
   approve,
+  getCodeImpact,
   mcpCodeSearch,
   mcpGet,
   mcpHybridSearch,
@@ -34,6 +35,7 @@ import {
 import { checkRateLimit } from "./runtime";
 import {
   ApproveSchema,
+  CodeImpactInputSchema,
   CodeSearchInputSchema,
   ContextInputSchema,
   FeedbackInputSchema,
@@ -118,7 +120,10 @@ export function registerMemoryTools(
                     )
                     .join("\n")}`
                 : "";
-              return `[${r.id.slice(0, CONFIG.mcp.shortIdLength)}] (${r.kind}, confidence: ${r.confidence})\n  ${r.snippet}\n  source: ${r.source} | created: ${r.created_at?.slice(0, 10) ?? "unknown"}${related}`;
+              const why = r.explanation
+                ? `\n  why: score=${r.explanation.composite_score} | ${r.explanation.why_selected.join(" ")}`
+                : "";
+              return `[${r.id.slice(0, CONFIG.mcp.shortIdLength)}] (${r.kind}, confidence: ${r.confidence})\n  ${r.snippet}\n  source: ${r.source} | created: ${r.created_at?.slice(0, 10) ?? "unknown"}${why}${related}`;
             })
             .join("\n\n"),
         );
@@ -255,7 +260,14 @@ export function registerMemoryTools(
     },
     // biome-ignore lint/suspicious/useAwait: warning suppression
     async (params) => {
-      const { source_memory_id, relation, target_memory_id, rationale, confidence, require_review } = params;
+      const {
+        source_memory_id,
+        relation,
+        target_memory_id,
+        rationale,
+        confidence,
+        require_review,
+      } = params;
       if (!MEMORY_EDGE_RELATIONS.includes(relation as MemoryEdgeRelation)) {
         return {
           content: [
@@ -471,10 +483,85 @@ export function registerMemoryTools(
   );
 
   server.registerTool(
+    "memory_code_impact",
+    {
+      description:
+        "Explain the memory-backed impact radius for a code path and optional symbol. Returns linked memories, related memory graph context, and other code paths sharing those memories.",
+      inputSchema: CodeImpactInputSchema,
+    },
+    // biome-ignore lint/suspicious/useAwait: warning suppression
+    async (params) => {
+      const { path, symbol, depth } = params;
+      const rl = checkRateLimit(rateLimiter, "memory_code_search");
+      if (!rl.allowed) {
+        return rateLimitError(rl.retryAfter);
+      }
+
+      try {
+        const impact = getCodeImpact(db, { projectId, path, symbol, depth });
+        if (impact.summary.entity_count === 0) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: guardOutput(
+                  `No indexed code entities found for ${path}${symbol ? `#${symbol}` : ""}.`,
+                ),
+              },
+            ],
+          };
+        }
+
+        const linked = impact.linked_memories
+          .slice(0, 8)
+          .map(
+            (entry) =>
+              `- [${entry.item.id.slice(0, CONFIG.mcp.shortIdLength)}] ${entry.link.relation}: ${entry.item.text.slice(0, CONFIG.mcp.snippetLength)}`,
+          )
+          .join("\n");
+        const related = impact.related_memories
+          .slice(0, 6)
+          .map(
+            (entry) =>
+              `- [${entry.item.id.slice(0, CONFIG.mcp.shortIdLength)}] ${entry.direction} ${entry.edge.relation}: ${entry.item.text.slice(0, CONFIG.mcp.snippetLength)}`,
+          )
+          .join("\n");
+        const paths = impact.affected_paths
+          .slice(0, 10)
+          .map(
+            (entry) =>
+              `- ${entry.entity.path}${entry.entity.symbol ? `#${entry.entity.symbol}` : ""} via ${entry.relation} memory ${entry.memory_id.slice(0, CONFIG.mcp.shortIdLength)}`,
+          )
+          .join("\n");
+
+        const text = [
+          `Impact for ${impact.query.path}${impact.query.symbol ? `#${impact.query.symbol}` : ""}`,
+          `entities=${impact.summary.entity_count} linked_memories=${impact.summary.linked_memory_count} related_memories=${impact.summary.related_memory_count} affected_paths=${impact.summary.affected_path_count}`,
+          linked ? `\nLinked memories:\n${linked}` : "\nLinked memories: none",
+          related ? `\nRelated graph memories:\n${related}` : "\nRelated graph memories: none",
+          paths ? `\nAffected paths:\n${paths}` : "\nAffected paths: none",
+        ].join("\n");
+
+        return { content: [{ type: "text" as const, text: guardOutput(text) }] };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: guardOutput(`Code impact error: ${(err as Error).message}`),
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
     "memory_propose",
     {
       description:
-        'Propose a new memory. Creates a PENDING proposal for agent review — the memory is NOT active until approved. In your next turn, use memory_list_proposals to see pending proposals, then memory_approve or memory_reject to decide. High-risk and critical-risk proposals should be reviewed carefully. Set require_review=true to force review for any risk level.',
+        "Propose a new memory. Creates a PENDING proposal for agent review — the memory is NOT active until approved. In your next turn, use memory_list_proposals to see pending proposals, then memory_approve or memory_reject to decide. High-risk and critical-risk proposals should be reviewed carefully. Set require_review=true to force review for any risk level.",
       inputSchema: ProposeInputSchema,
     },
     // biome-ignore lint/suspicious/useAwait: warning suppression
@@ -515,9 +602,7 @@ export function registerMemoryTools(
           confidence: confidence ?? undefined,
         });
 
-        const msg = [
-          result.message,
-        ];
+        const msg = [result.message];
 
         if (result.status === "approved") {
           msg.push("✅ Memory is now active and searchable.");
@@ -646,9 +731,7 @@ export function registerMemoryTools(
           content: [
             {
               type: "text" as const,
-              text: guardOutput(
-                `✅ Approved: proposal ${proposal_id} processed (delete action).`,
-              ),
+              text: guardOutput(`✅ Approved: proposal ${proposal_id} processed (delete action).`),
             },
           ],
         };

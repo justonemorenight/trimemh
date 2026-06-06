@@ -2,13 +2,13 @@ import type { Database } from "bun:sqlite";
 
 import { CONFIG } from "../config";
 import { classifyTaskContext, detectsOperationalContext } from "../context/compiler";
-import type { CodeMemoryResult, RecallResult } from "../domain/schema";
+import type { CodeMemoryResult, RecallExplanation, RecallResult } from "../domain/schema";
 import { getMemoriesForCodeRows, searchMemoryFts } from "../persistence/repository";
 import type { HybridQueryResult } from "../retrieval/hybrid";
 import { hybridRetrieve } from "../retrieval/hybrid";
 import { expandQuery, expandQueryForEmbedding } from "../retrieval/query-expansion";
 import { rerankCandidates } from "../retrieval/reranker";
-import type { RecallScoreInput } from "../retrieval/scoring";
+import type { RecallScoreInput, RecallScoreResult } from "../retrieval/scoring";
 import { rankRecallResults, selectWeights } from "../retrieval/scoring";
 import { embeddingForText } from "./service-helpers";
 
@@ -63,6 +63,91 @@ function applyRerank(
   return results.length > finalLimit ? results.slice(0, finalLimit) : results;
 }
 
+function graphDegreesForResults(
+  db: Database,
+  projectId: string,
+  results: RecallResult[],
+): Map<string, number> {
+  if (results.length === 0) {
+    return new Map();
+  }
+  const ids = results.map((r) => r.item.id);
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = db
+    .query(
+      `
+      SELECT memory_id, COUNT(*) AS degree FROM (
+        SELECT source_memory_id AS memory_id
+        FROM memory_edges
+        WHERE project_id = ? AND source_memory_id IN (${placeholders})
+        UNION ALL
+        SELECT target_memory_id AS memory_id
+        FROM memory_edges
+        WHERE project_id = ? AND target_memory_id IN (${placeholders})
+      )
+      GROUP BY memory_id;
+      `,
+    )
+    .all(projectId, ...ids, projectId, ...ids) as Array<{ memory_id: string; degree: number }>;
+  return new Map(rows.map((row) => [row.memory_id, row.degree]));
+}
+
+function topFactorLabels(factors: RecallScoreResult["factors"]): string[] {
+  return Object.entries(factors)
+    .filter(([, value]) => value > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([key]) => key);
+}
+
+function explainRecallResult(
+  input: RecallScoreInput,
+  scored: RecallScoreResult,
+  opts: {
+    taskType: string;
+    mode: "fts" | "vector" | "hybrid";
+    originalRank: number;
+  },
+): RecallExplanation {
+  const why: string[] = [];
+  const top = topFactorLabels(scored.factors);
+  if (top.length > 0) {
+    why.push(`Top signals: ${top.join(", ")}.`);
+  }
+  if (input.ftsRank > 0) {
+    why.push(`Lexical match ranked #${input.ftsRank}.`);
+  }
+  if (input.graphDegree > 0) {
+    why.push(`Connected to ${input.graphDegree} memory graph edge(s).`);
+  }
+  if (input.isCodePathMatch) {
+    why.push("Linked to the active code path.");
+  }
+  if (input.feedbackScore !== 0) {
+    why.push(`Feedback score ${input.feedbackScore.toFixed(2)} influenced ranking.`);
+  }
+  if (why.length === 0) {
+    why.push("Selected by baseline similarity, recency, and confidence signals.");
+  }
+
+  return {
+    why_selected: why,
+    composite_score: scored.compositeScore,
+    factors: scored.factors,
+    signals: {
+      task_type: opts.taskType,
+      retrieval_mode: opts.mode,
+      original_rank: opts.originalRank,
+      fts_rank: input.ftsRank,
+      graph_degree: input.graphDegree,
+      feedback_score: input.feedbackScore,
+      access_count: input.accessCount,
+      code_path_match: input.isCodePathMatch,
+      operational_context: input.isOperationalContext,
+    },
+  };
+}
+
 /**
  * Apply multi-factor scoring (P2 — Intelligence Upgrade) to rank results.
  * This layers on top of RRF + cross-encoder reranking with:
@@ -73,6 +158,9 @@ function applyScoring(
   results: RecallResult[],
   opts: {
     query: string;
+    db: Database;
+    projectId: string;
+    mode: "fts" | "vector" | "hybrid";
     currentFilePath?: string | null;
     graphDegrees?: Map<string, number>;
   },
@@ -80,48 +168,56 @@ function applyScoring(
   const taskType = classifyTaskContext(opts.query);
   const weights = selectWeights(taskType);
   const isOperational = detectsOperationalContext(opts.query);
+  const graphDegrees =
+    opts.graphDegrees ?? graphDegreesForResults(opts.db, opts.projectId, results);
 
-  const inputs: RecallScoreInput[] = results.map((r) => {
-    const item = r.item;
-    // Extract feedback score from metadata
-    let feedbackScore = 0;
-    try {
-      const meta = JSON.parse(item.metadata_json);
-      feedbackScore = meta.feedback_score ?? 0;
-    } catch {
-      /* ignore parse errors */
-    }
+  const entries: Array<{ input: RecallScoreInput; original: RecallResult; originalRank: number }> =
+    results.map((r) => {
+      const item = r.item;
 
-    // Estimate access count from metadata (updated by feedback loop)
-    let accessCount = 1;
-    try {
-      const meta = JSON.parse(item.metadata_json);
-      accessCount = meta.feedback_events ?? 1;
-    } catch {
-      /* ignore */
-    }
+      // Parse metadata once for feedback score and access count
+      let feedbackScore = 0;
+      let accessCount = 1;
+      try {
+        const meta = JSON.parse(item.metadata_json);
+        feedbackScore = meta.feedback_score ?? 0;
+        accessCount = meta.feedback_events ?? 1;
+      } catch {
+        /* ignore parse errors */
+      }
 
-    const isCodePathMatch = opts.currentFilePath
-      ? item.metadata_json.includes(opts.currentFilePath)
-      : false;
+      const isCodePathMatch = opts.currentFilePath
+        ? item.metadata_json.includes(opts.currentFilePath)
+        : false;
 
-    return {
-      similarity: r.rank <= 3 ? 0.9 : 1.0 / (1 + r.rank), // approximate from rank
-      ftsRank: r.rank,
-      item,
-      accessCount,
-      feedbackScore,
-      graphDegree: opts.graphDegrees?.get(item.id) ?? 0,
-      isCodePathMatch,
-      isOperationalContext: isOperational,
-    };
-  });
+      const input: RecallScoreInput = {
+        similarity: r.rank <= 3 ? 0.9 : 1.0 / (1 + r.rank), // approximate from rank
+        ftsRank: r.rank,
+        item,
+        accessCount,
+        feedbackScore,
+        graphDegree: graphDegrees.get(item.id) ?? 0,
+        isCodePathMatch,
+        isOperationalContext: isOperational,
+      };
+      return { input, original: r, originalRank: r.rank };
+    });
 
-  const ranked = rankRecallResults(inputs, weights);
+  const ranked = rankRecallResults(
+    entries.map((entry) => entry.input),
+    weights,
+  );
+  const byId = new Map(entries.map((entry) => [entry.input.item.id, entry]));
   return ranked.map((r, i) => ({
     item: r.item,
     rank: i + 1,
-    snippet: r.item.text.slice(0, CONFIG.service.snippetLength),
+    snippet:
+      byId.get(r.item.id)?.original.snippet ?? r.item.text.slice(0, CONFIG.service.snippetLength),
+    explanation: explainRecallResult(r, r, {
+      taskType,
+      mode: opts.mode,
+      originalRank: byId.get(r.item.id)?.originalRank ?? i + 1,
+    }),
   }));
 }
 
@@ -194,7 +290,7 @@ export function recall(
 
   results = applyRerank(query, results, finalLimit, opts?.rerank !== false, currentFilePath);
   // P2: Multi-factor scoring after reranking
-  results = applyScoring(results, { query, currentFilePath });
+  results = applyScoring(results, { query, db, projectId, mode, currentFilePath });
   return boostCurrentFileMatches(db, projectId, currentFilePath, results);
 }
 

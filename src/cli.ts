@@ -16,8 +16,10 @@ import { registerGraphCommands } from "./cli/graph-commands";
 import { registerMcpCommands } from "./cli/mcp-commands";
 import { registerMemoryCommands } from "./cli/memory-commands";
 import { registerProposalCommands } from "./cli/proposal-commands";
+import { withDb } from "./cli/with-db";
 import { loadConfig } from "./infrastructure/config";
 import { formatConfigAsJSON, generateMCPConfig } from "./mcp/config-gen";
+import { indexProject, seedProjectMemories } from "./service";
 
 const program = new Command();
 
@@ -113,7 +115,7 @@ program
       if (installed.length === 0) {
         console.log("\n  No AI agents detected on this system.\n");
         console.log("  Supported: Claude Code, Cursor IDE, OpenAI Codex, GitHub Copilot, Aider");
-        console.log("  Install one of these agents first, then run 'tritrimemh install' again.\n");
+        console.log("  Install one of these agents first, then run 'trimemh install' again.\n");
         console.log("  Or use --dry-run to preview the config for manual setup.\n");
         return;
       }
@@ -154,6 +156,45 @@ registerMcpCommands(program);
 // ─── Learn ─────────────────────────────────────────────────────────
 
 registerLearnCommand(program);
+
+// ─── Scan ──────────────────────────────────────────────────────────
+
+program
+  .command("scan")
+  .description("Scan project codebase and index code entities into the memory graph")
+  .option("--path <path>", "Scan a specific subdirectory")
+  .option("--max-files <number>", "Max files to scan", "200")
+  .option("--dry-run", "Parse and report without persisting")
+  .option("--seed", "Also create project overview seed memories")
+  .option("--db <path>", "Custom database path")
+  .action(
+    withDb((db, config, opts) => {
+      const maxFiles = parseInt(opts.maxFiles, 10);
+
+      console.log(`[triMemh] Scanning ${opts.path ?? "project root"} (max ${maxFiles} files)...`);
+      const result = indexProject(db, config.projectId, {
+        rootDir: process.cwd(),
+        subPath: opts.path,
+        maxFiles,
+        dryRun: opts.dryRun ?? false,
+      });
+
+      console.log(`[triMemh] ${result.summary}`);
+
+      if (result.topLevelDirs.length > 0) {
+        console.log(`[triMemh] Directories: ${result.topLevelDirs.join(", ")}`);
+      }
+
+      if (opts.seed && result.filesScanned > 0 && !opts.dryRun) {
+        const seeds = seedProjectMemories(db, config.projectId, result);
+        console.log(`[triMemh] Created ${seeds.length} seed memories.`);
+      }
+
+      if (opts.dryRun) {
+        console.log("[triMemh] Dry run — no changes persisted.");
+      }
+    }),
+  );
 
 // ─── Parse ─────────────────────────────────────────────────────────
 

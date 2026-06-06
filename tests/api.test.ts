@@ -4,7 +4,7 @@ import { unlinkSync } from "node:fs";
 
 import { createApi } from "../src/api";
 import { closeDb, getDb, runMigrations } from "../src/persistence/db";
-import { remember } from "../src/service";
+import { createMemoryCodeLink, remember } from "../src/service";
 
 const TEST_DB = "/tmp/memh-test-api.sqlite";
 const PROJECT = "api-test-project";
@@ -69,6 +69,11 @@ describe("REST API", () => {
     const body = await json(recallRes);
     expect(body.success).toBe(true);
     expect(body.count).toBeGreaterThan(0);
+    const data = body.data as Array<{
+      explanation?: { composite_score: number; why_selected: string[] };
+    }>;
+    expect(data[0]?.explanation?.composite_score).toBeGreaterThan(0);
+    expect(data[0]?.explanation?.why_selected.length).toBeGreaterThan(0);
   });
 
   it("supports vector and hybrid recall modes", async () => {
@@ -282,5 +287,39 @@ describe("REST API", () => {
     expect(approveRes.status).toBe(200);
     const approveBody = await json(approveRes);
     expect(approveBody.link_id).toBeTruthy();
+  });
+
+  it("returns code impact diagnostics", async () => {
+    const memory = remember(db, {
+      kind: "fact",
+      text: "API impact test: api.ts owns the HTTP surface",
+      projectId: PROJECT,
+      source: "cli:user:explicit",
+    });
+    createMemoryCodeLink(db, {
+      projectId: PROJECT,
+      memoryId: memory.id,
+      entityType: "file",
+      path: "src/api.ts",
+      relation: "documents",
+      source: "cli:user:explicit",
+      rationale: "Memory documents the API surface",
+    });
+
+    const res = await app.request("/api/code/impact?path=src%2Fapi.ts&depth=2");
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body.success).toBe(true);
+    const data = body.data as { summary: { entity_count: number; linked_memory_count: number } };
+    expect(data.summary.entity_count).toBeGreaterThan(0);
+    expect(data.summary.linked_memory_count).toBeGreaterThan(0);
+  });
+
+  it("serves the local viewer", async () => {
+    const res = await app.request("/viewer");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("triMemh Viewer");
+    expect(html).toContain("/api/memories/recall");
   });
 });

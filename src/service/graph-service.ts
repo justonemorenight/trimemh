@@ -1,31 +1,31 @@
 import type { Database } from "bun:sqlite";
+
 import { v4 as uuidv4 } from "uuid";
 
+import { detectAdversarialOverride } from "../context/compiler";
 import type {
   CodeEntity,
   CodeEntityInput,
-  CodeEntityType,
+  CodeImpactResult,
   CodeLinkRelation,
-  CodeMemoryResult,
   CreateMemoryCodeLinkInput,
   CreateMemoryEdgeInput,
   MemoryCodeLink,
   MemoryEdge,
   MemoryEdgeRelation,
-  MemoryItem,
   MemoryLinkProposal,
   ProposeMemoryCodeLinkInput,
   ProposeMemoryEdgeInput,
   RelatedMemoryResult,
 } from "../domain/schema";
 import { CODE_LINK_RELATIONS, MEMORY_EDGE_RELATIONS } from "../domain/schema";
-import { guardString } from "../infrastructure/guardrail";
-import { handleSecurityViolation } from "../infrastructure/guardrail";
-import { detectAdversarialOverride } from "../context/compiler";
+import { guardString, handleSecurityViolation } from "../infrastructure/guardrail";
 import {
   findCodeEntityByKey,
   findMemoryCodeLink,
   findMemoryEdge,
+  getCodeEntitiesForMemoryRows,
+  getMemoriesForCodeEntitiesRows,
   getMemoryById,
   getMemoryLinkProposalById,
   getRelatedMemoryRows,
@@ -33,6 +33,7 @@ import {
   insertMemoryCodeLink,
   insertMemoryEdge,
   insertMemoryLinkProposal,
+  listCodeEntitiesForPath,
   updateMemoryLinkProposal,
 } from "../persistence/repository";
 import {
@@ -209,6 +210,73 @@ export function getRelatedMemories(
 ): RelatedMemoryResult[] {
   assertMemoryInProject(getMemoryById(db, memoryId), projectId, memoryId);
   return getRelatedMemoryRows(db, projectId, memoryId, normalizeDepth(depth));
+}
+
+export function getCodeImpact(
+  db: Database,
+  input: {
+    projectId: string;
+    path: string;
+    symbol?: string;
+    depth?: number;
+  },
+): CodeImpactResult {
+  const path = guardString(input.path, "code_impact.path");
+  const symbol = input.symbol ? guardString(input.symbol, "code_impact.symbol") : undefined;
+  const depth = normalizeDepth(input.depth ?? 1);
+  const entities = listCodeEntitiesForPath(db, input.projectId, path, symbol);
+  const linkedRows = getMemoriesForCodeEntitiesRows(
+    db,
+    input.projectId,
+    entities.map((entity) => entity.id),
+  );
+  const linkedMemoryIds = [...new Set(linkedRows.map((row) => row.item.id))];
+  const relatedByKey = new Map<string, CodeImpactResult["related_memories"][number]>();
+  for (const memoryId of linkedMemoryIds) {
+    for (const related of getRelatedMemoryRows(db, input.projectId, memoryId, depth)) {
+      relatedByKey.set(`${related.item.id}:${related.edge.id}:${related.depth}`, {
+        item: related.item,
+        edge: related.edge,
+        direction: related.direction,
+        depth: related.depth,
+      });
+    }
+  }
+
+  const pathRows = getCodeEntitiesForMemoryRows(db, input.projectId, linkedMemoryIds);
+  const affectedByKey = new Map<string, CodeImpactResult["affected_paths"][number]>();
+  for (const row of pathRows) {
+    const key = `${row.memoryId}:${row.entity.id}:${row.link.relation}`;
+    affectedByKey.set(key, {
+      entity: row.entity,
+      memory_id: row.memoryId,
+      relation: row.link.relation,
+    });
+  }
+
+  const linked_memories = linkedRows.map((row) => ({
+    item: row.item,
+    link: row.link,
+  }));
+  const related_memories = [...relatedByKey.values()];
+  const affected_paths = [...affectedByKey.values()];
+
+  return {
+    query: {
+      path,
+      symbol: symbol ?? null,
+    },
+    entities,
+    linked_memories,
+    related_memories,
+    affected_paths,
+    summary: {
+      entity_count: entities.length,
+      linked_memory_count: linked_memories.length,
+      related_memory_count: related_memories.length,
+      affected_path_count: affected_paths.length,
+    },
+  };
 }
 
 // ─── Code Entities + Memory Code Links ────────────────────────────

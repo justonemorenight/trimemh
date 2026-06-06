@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 import type { TriMemhConfig } from "../domain/schema";
 
@@ -47,6 +47,21 @@ export function resolveProjectId(cwd: string): string {
 export function resolveDbPath(cwd: string, explicitPath?: string): string {
   if (explicitPath) {
     return explicitPath;
+  }
+
+  const configPath = join(cwd, CONFIG_FILE_NAME);
+  if (existsSync(configPath)) {
+    try {
+      const content = readFileSync(configPath, "utf-8");
+      // biome-ignore lint/performance/useTopLevelRegex: warning suppression
+      const match = content.match(/db_path\s*=\s*"([^"]+)"/);
+      const configured = match?.[1];
+      if (configured) {
+        return isAbsolute(configured) ? configured : resolve(cwd, configured);
+      }
+    } catch {
+      // fall through
+    }
   }
 
   // Default: .trimemh/memory.db in CWD

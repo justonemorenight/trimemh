@@ -63,6 +63,23 @@ export function getCodeEntityById(db: Database, id: string): CodeEntity | null {
   return rowToCodeEntity(row);
 }
 
+export function listCodeEntitiesForPath(
+  db: Database,
+  projectId: string,
+  path: string,
+  symbol?: string,
+): CodeEntity[] {
+  let sql = "SELECT * FROM code_entities WHERE project_id = ? AND path = ?";
+  const params: SQLQueryBindings[] = [projectId, path];
+  if (symbol) {
+    sql += " AND symbol = ?";
+    params.push(symbol);
+  }
+  sql += " ORDER BY entity_type ASC, line_start ASC, symbol ASC;";
+  const rows = db.query(sql).all(...params) as Record<string, unknown>[];
+  return rows.map(rowToCodeEntity);
+}
+
 // ─── Memory Code Links ───────────────────────────────────────────
 
 export function insertMemoryCodeLink(db: Database, link: MemoryCodeLink): MemoryCodeLink {
@@ -171,6 +188,138 @@ export function getMemoriesForCodeRows(
       created_at: r.entity_created_at,
       updated_at: r.entity_updated_at,
     }),
+    link: rowToMemoryCodeLink({
+      id: r.link_id,
+      project_id: r.link_project_id,
+      memory_id: r.link_memory_id,
+      entity_id: r.link_entity_id,
+      relation: r.link_relation,
+      confidence: r.link_confidence,
+      source: r.link_source,
+      rationale: r.link_rationale,
+      evidence_json: r.link_evidence_json,
+      metadata_json: r.link_metadata_json,
+      created_at: r.link_created_at,
+      updated_at: r.link_updated_at,
+    }),
+  }));
+}
+
+export function getMemoriesForCodeEntitiesRows(
+  db: Database,
+  projectId: string,
+  entityIds: string[],
+): CodeMemoryResult[] {
+  if (entityIds.length === 0) {
+    return [];
+  }
+  const placeholders = entityIds.map(() => "?").join(",");
+  const rows = db
+    .query(
+      `
+      SELECT
+        mi.*,
+        ce.id AS entity_id,
+        ce.project_id AS entity_project_id,
+        ce.entity_key,
+        ce.entity_type,
+        ce.path AS entity_path,
+        ce.symbol AS entity_symbol,
+        ce.line_start,
+        ce.line_end,
+        ce.fingerprint,
+        ce.metadata_json AS entity_metadata_json,
+        ce.created_at AS entity_created_at,
+        ce.updated_at AS entity_updated_at,
+        mcl.id AS link_id,
+        mcl.project_id AS link_project_id,
+        mcl.memory_id AS link_memory_id,
+        mcl.entity_id AS link_entity_id,
+        mcl.relation AS link_relation,
+        mcl.confidence AS link_confidence,
+        mcl.source AS link_source,
+        mcl.rationale AS link_rationale,
+        mcl.evidence_json AS link_evidence_json,
+        mcl.metadata_json AS link_metadata_json,
+        mcl.created_at AS link_created_at,
+        mcl.updated_at AS link_updated_at
+      FROM memory_code_links mcl
+      JOIN code_entities ce ON ce.id = mcl.entity_id
+      JOIN memory_items mi ON mi.id = mcl.memory_id
+      WHERE mcl.project_id = ? AND mcl.entity_id IN (${placeholders})
+      ORDER BY mcl.confidence DESC, mcl.created_at DESC;
+      `,
+    )
+    .all(projectId, ...entityIds) as Record<string, unknown>[];
+  return rows.map((r) => ({
+    item: rowToMemoryItem(r),
+    entity: rowToCodeEntity({
+      id: r.entity_id,
+      project_id: r.entity_project_id,
+      entity_key: r.entity_key,
+      entity_type: r.entity_type,
+      path: r.entity_path,
+      symbol: r.entity_symbol,
+      line_start: r.line_start,
+      line_end: r.line_end,
+      fingerprint: r.fingerprint,
+      metadata_json: r.entity_metadata_json,
+      created_at: r.entity_created_at,
+      updated_at: r.entity_updated_at,
+    }),
+    link: rowToMemoryCodeLink({
+      id: r.link_id,
+      project_id: r.link_project_id,
+      memory_id: r.link_memory_id,
+      entity_id: r.link_entity_id,
+      relation: r.link_relation,
+      confidence: r.link_confidence,
+      source: r.link_source,
+      rationale: r.link_rationale,
+      evidence_json: r.link_evidence_json,
+      metadata_json: r.link_metadata_json,
+      created_at: r.link_created_at,
+      updated_at: r.link_updated_at,
+    }),
+  }));
+}
+
+export function getCodeEntitiesForMemoryRows(
+  db: Database,
+  projectId: string,
+  memoryIds: string[],
+): Array<{ memoryId: string; entity: CodeEntity; link: MemoryCodeLink }> {
+  if (memoryIds.length === 0) {
+    return [];
+  }
+  const placeholders = memoryIds.map(() => "?").join(",");
+  const rows = db
+    .query(
+      `
+      SELECT
+        ce.*,
+        mcl.id AS link_id,
+        mcl.project_id AS link_project_id,
+        mcl.memory_id AS link_memory_id,
+        mcl.entity_id AS link_entity_id,
+        mcl.relation AS link_relation,
+        mcl.confidence AS link_confidence,
+        mcl.source AS link_source,
+        mcl.rationale AS link_rationale,
+        mcl.evidence_json AS link_evidence_json,
+        mcl.metadata_json AS link_metadata_json,
+        mcl.created_at AS link_created_at,
+        mcl.updated_at AS link_updated_at
+      FROM memory_code_links mcl
+      JOIN code_entities ce ON ce.id = mcl.entity_id
+      WHERE mcl.project_id = ? AND mcl.memory_id IN (${placeholders})
+      ORDER BY ce.path ASC, ce.symbol ASC;
+      `,
+    )
+    .all(projectId, ...memoryIds) as Record<string, unknown>[];
+  return rows.map((r) => ({
+    memoryId: r.link_memory_id as string,
+    entity: rowToCodeEntity(r),
     link: rowToMemoryCodeLink({
       id: r.link_id,
       project_id: r.link_project_id,

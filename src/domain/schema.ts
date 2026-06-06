@@ -302,10 +302,73 @@ export interface CodeMemoryResult {
   link: MemoryCodeLink;
 }
 
+export interface RecallExplanation {
+  why_selected: string[];
+  composite_score: number;
+  factors: {
+    similarity: number;
+    recency: number;
+    confidence: number;
+    access: number;
+    feedback: number;
+    ftsBoost: number;
+    riskBoost: number;
+    graphBoost: number;
+    codePathBoost: number;
+  };
+  signals: {
+    task_type: string;
+    retrieval_mode: "fts" | "vector" | "hybrid";
+    original_rank: number;
+    fts_rank: number;
+    graph_degree: number;
+    feedback_score: number;
+    access_count: number;
+    code_path_match: boolean;
+    operational_context: boolean;
+  };
+}
+
 export interface RecallResult {
   item: MemoryItem;
   rank: number;
   snippet: string;
+  explanation?: RecallExplanation;
+}
+
+export interface CodeImpactMemory {
+  item: MemoryItem;
+  link: MemoryCodeLink;
+}
+
+export interface CodeImpactRelatedMemory {
+  item: MemoryItem;
+  edge: MemoryEdge;
+  direction: "incoming" | "outgoing";
+  depth: number;
+}
+
+export interface CodeImpactPath {
+  entity: CodeEntity;
+  memory_id: string;
+  relation: CodeLinkRelation;
+}
+
+export interface CodeImpactResult {
+  query: {
+    path: string;
+    symbol: string | null;
+  };
+  entities: CodeEntity[];
+  linked_memories: CodeImpactMemory[];
+  related_memories: CodeImpactRelatedMemory[];
+  affected_paths: CodeImpactPath[];
+  summary: {
+    entity_count: number;
+    linked_memory_count: number;
+    related_memory_count: number;
+    affected_path_count: number;
+  };
 }
 
 export interface MemoryStats {
@@ -323,6 +386,7 @@ export interface McpSearchResult {
   confidence: number;
   source: string;
   created_at: string;
+  explanation?: RecallExplanation;
   related?: Array<{
     id: string;
     kind: MemoryKind;

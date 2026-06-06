@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
 
+import { getMemoriesForCode, recall } from "../application/recall-use-cases";
+import { CONFIG } from "../config";
 import type {
   CodeMemoryResult,
   McpLinkProposalResult,
@@ -8,7 +10,6 @@ import type {
   MemoryItem,
   MemoryKind,
   MemoryStats,
-  ProposalStatus,
   ProposeInput,
   ProposeMemoryCodeLinkInput,
   ProposeMemoryEdgeInput,
@@ -16,14 +17,7 @@ import type {
   RiskLevel,
 } from "../domain/schema";
 import { KIND_RISK_MAP } from "../domain/schema";
-import { CONFIG } from "../config";
-import { getMemoriesForCode, hybridRecall } from "../application/recall-use-cases";
-import {
-  getMemoryById,
-  getMemoryStats,
-  getRelatedMemoryRows,
-  searchMemoryFts,
-} from "../persistence/repository";
+import { getMemoryById, getMemoryStats, getRelatedMemoryRows } from "../persistence/repository";
 import { shouldAutoApproveLink, shouldAutoApproveMemory } from "./auto-approval";
 import {
   approveMemoryLinkProposal,
@@ -41,7 +35,9 @@ export function mcpSearch(
   query: string,
   limit = CONFIG.service.defaultSearchLimit,
 ): McpSearchResult[] {
-  const results = searchMemoryFts(db, projectId, query, limit);
+  const results = recall(db, projectId, query, limit, "fts", null, null, {
+    rerank: false,
+  });
   return results.map((r) => ({
     id: r.item.id,
     kind: r.item.kind as MemoryKind,
@@ -50,6 +46,7 @@ export function mcpSearch(
     confidence: r.item.confidence,
     source: r.item.source,
     created_at: r.item.created_at,
+    explanation: r.explanation,
     related: getRelatedMemoryRows(db, projectId, r.item.id, 1)
       .slice(0, 3)
       .map((related) => ({
@@ -69,7 +66,10 @@ export function mcpHybridSearch(
   embedding: Float32Array | null,
   limit = CONFIG.service.defaultSearchLimit,
 ): McpSearchResult[] {
-  const results = hybridRecall(db, projectId, query || null, embedding, limit);
+  const mode = query ? "hybrid" : "vector";
+  const results = recall(db, projectId, query || "", limit, mode, embedding, null, {
+    rerank: false,
+  });
   return results.map((r) => ({
     id: r.item.id,
     kind: r.item.kind as MemoryKind,
@@ -78,6 +78,7 @@ export function mcpHybridSearch(
     confidence: r.item.confidence,
     source: r.item.source,
     created_at: r.item.created_at,
+    explanation: r.explanation,
     related: getRelatedMemoryRows(db, projectId, r.item.id, 1)
       .slice(0, 3)
       .map((rel) => ({

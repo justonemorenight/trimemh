@@ -8,6 +8,7 @@ import {
   createMemoryCodeLink,
   createMemoryEdge,
   createOrGetCodeEntity,
+  getCodeImpact,
   getMemoriesForCode,
   getRelatedMemories,
   proposeMemoryCodeLink,
@@ -223,6 +224,24 @@ describe("Memory graph + code links", () => {
 
     const results = getMemoriesForCode(db, PROJECT, "src/config.ts", "loadConfig");
     expect(results.some((r) => r.item.id === memoryA)).toBe(true);
+  });
+
+  it("should explain code impact for a path and symbol", () => {
+    const impact = getCodeImpact(db, {
+      projectId: PROJECT,
+      path: "src/config.ts",
+      symbol: "loadConfig",
+      depth: 2,
+    });
+
+    expect(impact.summary.entity_count).toBeGreaterThan(0);
+    expect(impact.linked_memories.some((entry) => entry.item.id === memoryA)).toBe(true);
+    expect(impact.related_memories.some((entry) => entry.item.id === memoryB)).toBe(true);
+    expect(
+      impact.affected_paths.some(
+        (entry) => entry.entity.path === "src/config.ts" && entry.entity.symbol === "loadConfig",
+      ),
+    ).toBe(true);
   });
 
   it("should create pending code link proposals and approve them", () => {

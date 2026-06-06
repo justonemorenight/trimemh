@@ -1,6 +1,28 @@
 // ─── Repository barrel — re-exports from sub-modules ─────────────
 // Backward-compatible: all imports from "./persistence/repository" still work.
 
+// Code Entities + Links + Link Proposals
+export {
+  findCodeEntityByKey,
+  findMemoryCodeLink,
+  getCodeEntitiesForMemoryRows,
+  getCodeEntityById,
+  getMemoriesForCodeEntitiesRows,
+  getMemoriesForCodeRows,
+  getMemoryLinkProposalById,
+  insertCodeEntity,
+  insertMemoryCodeLink,
+  insertMemoryLinkProposal,
+  listCodeEntitiesForPath,
+  updateMemoryLinkProposal,
+} from "./code-link-repo";
+// Memory Graph
+export {
+  findMemoryEdge,
+  getMemoryEdgeById,
+  getRelatedMemoryRows,
+  insertMemoryEdge,
+} from "./graph-repo";
 // Memory items
 export {
   deleteMemoryItem,
@@ -13,7 +35,6 @@ export {
   searchMemoryFts,
   updateMemoryItem,
 } from "./memory-repo";
-
 // Proposals + Audit + Stats
 export {
   getAuditEvents,
@@ -25,24 +46,3 @@ export {
   listProposals,
   updateProposal,
 } from "./proposal-repo";
-
-// Memory Graph
-export {
-  findMemoryEdge,
-  getMemoryEdgeById,
-  getRelatedMemoryRows,
-  insertMemoryEdge,
-} from "./graph-repo";
-
-// Code Entities + Links + Link Proposals
-export {
-  findCodeEntityByKey,
-  findMemoryCodeLink,
-  getCodeEntityById,
-  getMemoriesForCodeRows,
-  getMemoryLinkProposalById,
-  insertCodeEntity,
-  insertMemoryCodeLink,
-  insertMemoryLinkProposal,
-  updateMemoryLinkProposal,
-} from "./code-link-repo";

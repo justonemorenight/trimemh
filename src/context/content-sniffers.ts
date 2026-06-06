@@ -41,6 +41,10 @@ interface ContentSniffer {
   test: (text: string) => number;
 }
 
+const CODE_TRAILING_STRUCTURE_RE = /[{};]\s*$/;
+const DOCKERFILE_DIRECTIVE_RE =
+  /^(FROM|RUN|COPY|ENV|EXPOSE|CMD|ENTRYPOINT|WORKDIR|ADD|VOLUME|USER|ARG|LABEL)\s/m;
+
 const SNIFFERS: ContentSniffer[] = [
   {
     type: "diff",
@@ -97,12 +101,16 @@ const SNIFFERS: ContentSniffer[] = [
 
         if (
           // biome-ignore lint/performance/useTopLevelRegex: warning suppression
-          /^(pub\s+)?(async\s+)?(function|class|def\s|fn\s|interface|enum|type|struct|impl|module|namespace)\s+\w/.test(t)
+          /^(pub\s+)?(async\s+)?(function|class|def\s|fn\s|interface|enum|type|struct|impl|module|namespace)\s+\w/.test(
+            t,
+          )
         ) {
           structuralLines += 3;
         } else if (
           // biome-ignore lint/performance/useTopLevelRegex: warning suppression
-          /^(import\s+|export\s+(default\s+)?(async\s+)?(function|class|const|let|var|interface|type|enum))/.test(t)
+          /^(import\s+|export\s+(default\s+)?(async\s+)?(function|class|const|let|var|interface|type|enum))/.test(
+            t,
+          )
         ) {
           structuralLines += 3;
         } else if (
@@ -122,7 +130,8 @@ const SNIFFERS: ContentSniffer[] = [
           structuralLines += 1;
         } else if (
           // biome-ignore lint/performance/useTopLevelRegex: warning suppression
-          /^[{};]\s*$/.test(t) || /[{};]\s*$/.test(t)
+          /^[{};]\s*$/.test(t) ||
+          CODE_TRAILING_STRUCTURE_RE.test(t)
         ) {
           structuralLines += 1;
         } else if (
@@ -202,7 +211,9 @@ const SNIFFERS: ContentSniffer[] = [
 
         const hasTimestamp =
           // biome-ignore lint/performance/useTopLevelRegex: warning suppression
-          /^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}|\[\d{4}-\d{2}-\d{2}|\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})/.test(trimmed);
+          /^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}|\[\d{4}-\d{2}-\d{2}|\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})/.test(
+            trimmed,
+          );
 
         if (hasTimestamp) {
           timestampLines++;
@@ -250,8 +261,7 @@ const SNIFFERS: ContentSniffer[] = [
     type: "config",
     test: (text) => {
       let score = 0;
-      // biome-ignore lint/performance/useTopLevelRegex: warning suppression
-      if (/^(FROM|RUN|COPY|ENV|EXPOSE|CMD|ENTRYPOINT|WORKDIR|ADD|VOLUME|USER|ARG|LABEL)\s/m.test(text)) {
+      if (DOCKERFILE_DIRECTIVE_RE.test(text)) {
         score += 0.8;
       }
       // biome-ignore lint/performance/useTopLevelRegex: warning suppression

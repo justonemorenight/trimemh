@@ -10,7 +10,6 @@ import type {
   ProposalStatus,
   ProposeInput,
   RiskLevel,
-  Visibility,
 } from "../domain/schema";
 import { KIND_RISK_MAP } from "../domain/schema";
 import { guardString } from "../infrastructure/guardrail";
@@ -131,8 +130,8 @@ export function approve(
 ): MemoryItem | null {
   let proposal = getProposalById(db, proposalId);
   if (!proposal) {
-    const proposals = listPendingProposals(db, projectId);
-    const matched = proposals.filter((p) => p.id.startsWith(proposalId));
+    const pendingProposals = listPendingProposals(db, projectId);
+    const matched = pendingProposals.filter((p) => p.id.startsWith(proposalId));
     if (matched.length === 1) {
       proposal = matched[0] || null;
     } else if (matched.length > 1) {
@@ -249,8 +248,8 @@ export function reject(
 ): MemoryProposal {
   let proposal = getProposalById(db, proposalId);
   if (!proposal) {
-    const proposals = listPendingProposals(db, projectId);
-    const matched = proposals.filter((p) => p.id.startsWith(proposalId));
+    const pendingProposals = listPendingProposals(db, projectId);
+    const matched = pendingProposals.filter((p) => p.id.startsWith(proposalId));
     if (matched.length === 1) {
       proposal = matched[0] || null;
     } else if (matched.length > 1) {

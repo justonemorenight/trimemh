@@ -9,7 +9,6 @@ import { assertDirectWriteAllowed, guardString } from "../infrastructure/guardra
 import { withWriteTransaction } from "../persistence/db";
 import {
   findMemoryByHash,
-  getMemoriesWithEmbeddings,
   insertMemoryItem,
   listMemoryItems as listMemories,
 } from "../persistence/repository";
@@ -20,7 +19,6 @@ import { serializeEmbedding } from "../retrieval/embedding";
 import { localEmbeddingProvider } from "../retrieval/embedding-provider";
 import { deleteMemoryItem, getMemoryById } from "../persistence/repository";
 import {
-  assertMemoryInProject,
   audit,
   candidatesForProject,
   dedupCheckAndMergeBatch,
@@ -158,7 +156,6 @@ export function listAll(
   db: Database,
   projectId: string,
   kind?: string,
-  // biome-ignore lint/nursery/noShadow: warning suppression
   status?: string,
 ): MemoryItem[] {
   return listMemories(db, projectId, { kind, status, limit: CONFIG.service.defaultListLimit });

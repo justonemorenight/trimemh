@@ -1,8 +1,7 @@
 import type { Command } from "commander";
 
 import { assembleMemoryContext } from "../context/context-runtime";
-import { loadConfig } from "../infrastructure/config";
-import { closeDb, getDb, runMigrations } from "../persistence/db";
+import { withDb } from "./with-db";
 
 function csv(value: string | undefined): string[] {
   if (!value) {
@@ -23,14 +22,8 @@ export function registerContextCommand(program: Command): void {
     .option("--lineage <csv>", "Comma-separated memory IDs to include one-turn lineage for")
     .option("--tokens <number>", "Model context window tokens", "32000")
     .option("--db <path>", "Custom database path")
-    // biome-ignore lint/suspicious/useAwait: warning suppression
-    .action(async (opts) => {
-      const config = loadConfig();
-      const dbPath = opts.db ?? config.dbPath;
-      const db = getDb(dbPath);
-      runMigrations(db);
-
-      try {
+    .action(
+      withDb((db, config, opts) => {
         const assembled = assembleMemoryContext({
           db,
           projectId: config.projectId,
@@ -48,11 +41,6 @@ export function registerContextCommand(program: Command): void {
             "[triMemh] warning: memory context remains over budget after compaction/eviction.",
           );
         }
-      } catch (err: unknown) {
-        console.error(`[triMemh] Error: ${(err as Error).message}`);
-        process.exit(1);
-      }
-
-      closeDb();
-    });
+      }),
+    );
 }

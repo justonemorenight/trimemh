@@ -14,11 +14,6 @@ function ensureMigrationsTable(database: Database): void {
   `);
 }
 
-function migrationAlreadyApplied(database: Database, version: number): boolean {
-  const row = database.query("SELECT 1 FROM schema_migrations WHERE version = ?;").get(version);
-  return row !== null;
-}
-
 function recordMigration(database: Database, version: number, name: string): void {
   database.run("INSERT INTO schema_migrations (version, name) VALUES (?, ?);", [version, name]);
 }
