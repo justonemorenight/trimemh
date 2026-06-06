@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 
 import { CONFIG } from "../config";
 import type { MemoryItem } from "../domain/schema";
-import { getAuditEvents } from "../persistence/repository";
+import { getAuditEvents, listPendingProposals } from "../persistence/repository";
 import { embedText } from "../retrieval/embedding-provider";
 import { vectorSearch } from "../retrieval/hybrid";
 import { getMemoriesForCode, listAll } from "../service";
@@ -66,6 +66,8 @@ export interface AssembledContext {
   };
   /** Whether the KV-cache prefix changed (CacheAligner) */
   prefixChanged: boolean;
+  /** Number of pending proposals awaiting agent review */
+  pendingProposalCount: number;
 }
 
 export function createRuntimeContextState(): RuntimeContextState {
@@ -133,10 +135,13 @@ function renderContextXml(
   state: PromptContextState,
   projectId: string,
   fingerprint: string,
+  pendingProposalCount: number,
 ): { xml: string; prefixChanged: boolean } {
   const { changed } = updatePrefixFingerprint(fingerprint);
 
   const parts = [compileStablePrefix(projectId), state.layer1];
+  // Pending proposals alert (tells agent to use memory_list_proposals)
+  parts.push(`<pending_proposals count="${pendingProposalCount}" />`);
   // Layer 2 always rendered (CacheAligner: stable structure)
   if (state.layer2Details.length > 0) {
     parts.push(compileLayer2Details(state.layer2Details));
@@ -169,6 +174,10 @@ export function assembleMemoryContext(input: AssembleContextInput): AssembledCon
 
   const allActiveMemories = listAll(input.db, input.projectId, undefined, "active");
   const layer1 = compileLayer1Index(allActiveMemories, { projectId: input.projectId });
+
+  // Fetch pending proposals count for agent review awareness
+  const pendingProposals = listPendingProposals(input.db, input.projectId);
+  const pendingProposalCount = pendingProposals.length;
 
   const { kept, evicted } = evictLruDetails(previous.activeDetails, turn, openPaths);
   const keptDetails = kept.map((detail) => ({ item: detail.item }));
@@ -248,9 +257,15 @@ export function assembleMemoryContext(input: AssembleContextInput): AssembledCon
     String(budgeted.state.layer2Details.length),
     String(budgeted.state.layer3Lineages.length),
     budgeted.compactedIndex ? "compact" : "full",
+    `pending:${pendingProposalCount}`,
   ].join(":");
 
-  const { xml, prefixChanged } = renderContextXml(budgeted.state, input.projectId, fingerprint);
+  const { xml, prefixChanged } = renderContextXml(
+    budgeted.state,
+    input.projectId,
+    fingerprint,
+    pendingProposalCount,
+  );
 
   // Collect CCR stats
   const ccrStore = getCcrStore();
@@ -286,5 +301,6 @@ export function assembleMemoryContext(input: AssembleContextInput): AssembledCon
       retrievableCount: ccrStore.deferred.size,
     },
     prefixChanged,
+    pendingProposalCount,
   };
 }

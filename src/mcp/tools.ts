@@ -17,6 +17,7 @@ import type { RateLimiter } from "../infrastructure/rate-limit";
 import { embedText } from "../retrieval/embedding-provider";
 import { applyFeedback } from "../retrieval/feedback";
 import {
+  approve,
   mcpCodeSearch,
   mcpGet,
   mcpHybridSearch,
@@ -27,16 +28,21 @@ import {
   mcpRetrieveFull,
   mcpSearch,
   mcpStats,
+  proposals,
+  reject,
 } from "../service";
 import { checkRateLimit } from "./runtime";
 import {
+  ApproveSchema,
   CodeSearchInputSchema,
   ContextInputSchema,
   FeedbackInputSchema,
   GetInputSchema,
+  ListProposalsSchema,
   MemoryCodeLinkProposeInputSchema,
   MemoryLinkProposeInputSchema,
   ProposeInputSchema,
+  RejectSchema,
   RelatedInputSchema,
   RetrieveInputSchema,
   SearchInputSchema,
@@ -244,12 +250,12 @@ export function registerMemoryTools(
     "memory_link_propose",
     {
       description:
-        "Propose a memory-to-memory graph edge. IMPORTANT: This creates a PENDING proposal only; it does not create the link. User approval via CLI is required.",
+        "Propose a memory-to-memory graph edge. Creates a pending proposal for agent review. Use memory_list_proposals to find it, then memory_approve to confirm. Set require_review=true to ensure explicit review.",
       inputSchema: MemoryLinkProposeInputSchema,
     },
     // biome-ignore lint/suspicious/useAwait: warning suppression
     async (params) => {
-      const { source_memory_id, relation, target_memory_id, rationale, confidence } = params;
+      const { source_memory_id, relation, target_memory_id, rationale, confidence, require_review } = params;
       if (!MEMORY_EDGE_RELATIONS.includes(relation as MemoryEdgeRelation)) {
         return {
           content: [
@@ -287,6 +293,7 @@ export function registerMemoryTools(
           confidence,
           proposedBy: "mcp:agent",
           argumentsHash: argsHash,
+          requireReview: require_review ?? undefined,
         });
         return {
           content: [
@@ -316,7 +323,7 @@ export function registerMemoryTools(
     "memory_code_link_propose",
     {
       description:
-        "Propose a memory-to-code link. IMPORTANT: This creates a PENDING proposal only; it does not create the link. User approval via CLI is required.",
+        "Propose a memory-to-code link. Creates a pending proposal for agent review. Use memory_list_proposals to find it, then memory_approve to confirm. Set require_review=true to ensure explicit review.",
       inputSchema: MemoryCodeLinkProposeInputSchema,
     },
     // biome-ignore lint/suspicious/useAwait: warning suppression
@@ -332,6 +339,7 @@ export function registerMemoryTools(
         fingerprint,
         rationale,
         confidence,
+        require_review,
       } = params;
       if (!CODE_LINK_RELATIONS.includes(relation as CodeLinkRelation)) {
         return {
@@ -393,6 +401,7 @@ export function registerMemoryTools(
           confidence,
           proposedBy: "mcp:agent",
           argumentsHash: argsHash,
+          requireReview: require_review ?? undefined,
         });
         return {
           content: [
@@ -465,7 +474,7 @@ export function registerMemoryTools(
     "memory_propose",
     {
       description:
-        'Propose a new memory. IMPORTANT: This creates a PENDING proposal — it does NOT write memory directly. All proposals require user approval via CLI ("tritrimemh approve <id>"). High-risk kinds (procedure, mistake) and critical-risk kinds (trade_rule, security_rule) cannot be auto-approved. Only propose when you have meaningful context to preserve.',
+        'Propose a new memory. Creates a PENDING proposal for agent review — the memory is NOT active until approved. In your next turn, use memory_list_proposals to see pending proposals, then memory_approve or memory_reject to decide. High-risk and critical-risk proposals should be reviewed carefully. Set require_review=true to force review for any risk level.',
       inputSchema: ProposeInputSchema,
     },
     // biome-ignore lint/suspicious/useAwait: warning suppression
@@ -475,7 +484,7 @@ export function registerMemoryTools(
         return rateLimitError(rl.retryAfter);
       }
 
-      const { kind, text, rationale } = params;
+      const { kind, text, rationale, require_review, confidence } = params;
       const validKinds = Object.keys(KIND_RISK_MAP);
       if (!validKinds.includes(kind as string)) {
         return {
@@ -502,26 +511,31 @@ export function registerMemoryTools(
           proposedBy: "mcp:agent",
           rationale: rationale ?? undefined,
           argumentsHash: argsHash,
+          requireReview: require_review ?? undefined,
+          confidence: confidence ?? undefined,
         });
 
         const msg = [
-          `Proposal created: ${result.proposal_id}`,
-          `Risk level: ${result.risk_level}`,
-          `Status: ${result.status}`,
+          result.message,
         ];
 
-        if (risk === "critical") {
-          msg.push(
-            "⚠️ CRITICAL risk — this proposal requires explicit user approval and will never be auto-approved.",
-          );
-        } else if (risk === "high") {
-          msg.push(
-            "⚠️ HIGH risk — this proposal requires user approval with rationale and evidence.",
-          );
+        if (result.status === "approved") {
+          msg.push("✅ Memory is now active and searchable.");
         } else {
-          msg.push(
-            "Proposal pending user approval. The user can approve it with: trimemh approve <proposal_id>",
-          );
+          const kindLabel = `${kind} (${risk} risk)`;
+          if (risk === "critical") {
+            msg.push(
+              `⚠️ CRITICAL risk ${kindLabel} — review carefully. Use memory_list_proposals to find it, then memory_approve or memory_reject.`,
+            );
+          } else if (risk === "high") {
+            msg.push(
+              `⚠️ HIGH risk ${kindLabel} — review before approving. Use memory_list_proposals + memory_approve.`,
+            );
+          } else {
+            msg.push(
+              `⏳ Pending agent review. In your next turn, use memory_list_proposals to review and memory_approve to confirm.`,
+            );
+          }
         }
 
         return {
@@ -533,6 +547,164 @@ export function registerMemoryTools(
             {
               type: "text" as const,
               text: guardOutput(`Proposal error: ${(err as Error).message}`),
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  // ─── Agent Review Tools ──────────────────────────────────────
+
+  server.registerTool(
+    "memory_list_proposals",
+    {
+      description:
+        "List pending proposals that need your review. After proposing memories with memory_propose, use this in your next turn to find proposals awaiting approval. Then use memory_approve or memory_reject to decide their fate.",
+      inputSchema: ListProposalsSchema,
+    },
+    // biome-ignore lint/suspicious/useAwait: warning suppression
+    async (params) => {
+      const rl = checkRateLimit(rateLimiter, "memory_list_proposals");
+      if (!rl.allowed) {
+        return rateLimitError(rl.retryAfter);
+      }
+
+      const { status: filterStatus, limit } = params;
+      try {
+        const items = proposals(db, projectId, filterStatus);
+        const limited = items.slice(0, limit);
+
+        if (limited.length === 0) {
+          return {
+            content: [{ type: "text" as const, text: `No ${filterStatus} proposals found.` }],
+          };
+        }
+
+        const text = limited
+          .map(
+            (p) =>
+              `[${p.id.slice(0, 8)}] ${p.risk_level.padEnd(8)} | ${p.proposed_kind.padEnd(16)} | ${p.proposed_by}\n  "${p.proposed_text.slice(0, 120)}${p.proposed_text.length > 120 ? "…" : ""}"\n  rationale: ${p.rationale ?? "none"}`,
+          )
+          .join("\n\n");
+
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: guardOutput(
+                `${limited.length} ${filterStatus} proposal(s):\n\n${text}\n\n── Use memory_approve <id> to accept or memory_reject <id> to decline.`,
+              ),
+            },
+          ],
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: guardOutput(`List proposals error: ${(err as Error).message}`),
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "memory_approve",
+    {
+      description:
+        "Approve a pending memory proposal. The proposal is converted into an active, searchable memory. Use this after reviewing proposals from memory_list_proposals.",
+      inputSchema: ApproveSchema,
+    },
+    // biome-ignore lint/suspicious/useAwait: warning suppression
+    async (params) => {
+      const rl = checkRateLimit(rateLimiter, "memory_approve");
+      if (!rl.allowed) {
+        return rateLimitError(rl.retryAfter);
+      }
+
+      const { proposal_id } = params;
+      try {
+        const memory = approve(db, projectId, proposal_id, "mcp:agent");
+        if (memory) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: guardOutput(
+                  `✅ Approved: memory ${memory.id.slice(0, 8)} created (kind: ${memory.kind}). Now active and searchable.`,
+                ),
+              },
+            ],
+          };
+        }
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: guardOutput(
+                `✅ Approved: proposal ${proposal_id} processed (delete action).`,
+              ),
+            },
+          ],
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: guardOutput(`Approve error: ${(err as Error).message}`),
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "memory_reject",
+    {
+      description:
+        "Reject a pending memory proposal. The proposal is declined and will not become active. Use this when a proposal is incorrect, redundant, or low-quality. Provide a brief note explaining why.",
+      inputSchema: RejectSchema,
+    },
+    // biome-ignore lint/suspicious/useAwait: warning suppression
+    async (params) => {
+      const rl = checkRateLimit(rateLimiter, "memory_reject");
+      if (!rl.allowed) {
+        return rateLimitError(rl.retryAfter);
+      }
+
+      const { proposal_id, note } = params;
+      try {
+        const declined = reject(
+          db,
+          projectId,
+          proposal_id,
+          note ?? "Rejected by agent",
+          "mcp:agent",
+        );
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: guardOutput(
+                `❌ Rejected: proposal ${declined.id.slice(0, 8)} (${declined.proposed_kind}). Note: ${declined.decision_note}`,
+              ),
+            },
+          ],
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: guardOutput(`Reject error: ${(err as Error).message}`),
             },
           ],
           isError: true,

@@ -83,6 +83,17 @@ export const ProposeInputSchema = z.object({
       },
     )
     .describe("Why this memory should exist"),
+  require_review: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe("Set to true to bypass auto-approve and require explicit user review"),
+  confidence: z
+    .number()
+    .min(0.0)
+    .max(1.0)
+    .optional()
+    .describe("Confidence score (0-1). Proposals below 0.3 may be kept pending for review"),
 });
 
 export const GetInputSchema = z.object({
@@ -121,6 +132,11 @@ export const MemoryLinkProposeInputSchema = z.object({
     )
     .describe("Why this link should exist"),
   confidence: z.number().min(0).max(1).default(0.5).describe("Confidence 0-1"),
+  require_review: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe("Set to true to bypass auto-approve and require explicit user review"),
 });
 
 export const MemoryCodeLinkProposeInputSchema = z.object({
@@ -180,6 +196,11 @@ export const MemoryCodeLinkProposeInputSchema = z.object({
     )
     .describe("Why this link should exist"),
   confidence: z.number().min(0).max(1).default(0.5).describe("Confidence 0-1"),
+  require_review: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe("Set to true to bypass auto-approve and require explicit user review"),
 });
 
 export const CodeSearchInputSchema = z.object({
@@ -245,4 +266,38 @@ export const ContextInputSchema = z.object({
     .max(CONFIG.context.maxModelTokens)
     .default(CONFIG.context.defaultModelTokens)
     .describe("Model context window tokens; memory context is capped to 10%"),
+});
+
+// ─── Agent Review Tools ───────────────────────────────────────────
+
+export const ListProposalsSchema = z.object({
+  status: z
+    .enum(["pending", "approved", "rejected"])
+    .default("pending")
+    .describe("Filter proposals by status (default: pending)"),
+  limit: z
+    .number()
+    .min(1)
+    .max(50)
+    .default(20)
+    .describe("Max proposals to return"),
+});
+
+export const ApproveSchema = z.object({
+  proposal_id: z
+    .string()
+    .max(CONFIG.zod.maxLineageIds)
+    .describe("Proposal ID to approve (full UUID or prefix)"),
+});
+
+export const RejectSchema = z.object({
+  proposal_id: z
+    .string()
+    .max(CONFIG.zod.maxLineageIds)
+    .describe("Proposal ID to reject (full UUID or prefix)"),
+  note: z
+    .string()
+    .max(CONFIG.zod.maxMemoryRationale)
+    .optional()
+    .describe("Reason for rejection"),
 });

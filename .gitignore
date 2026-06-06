@@ -43,6 +43,3 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 stderr.txt
 stdout.txt
 test-output.txt
-
-# Temporary / scaffolding files
-ORIGINAL_REQUEST.md

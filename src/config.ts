@@ -107,6 +107,9 @@ export const CONFIG = {
       memory_code_search: { capacity: 20, refillRate: 5, label: "memory_code_search" },
       memory_link_propose: { capacity: 10, refillRate: 1, label: "memory_link_propose" },
       memory_code_link_propose: { capacity: 10, refillRate: 1, label: "memory_code_link_propose" },
+      memory_list_proposals: { capacity: 20, refillRate: 5, label: "memory_list_proposals" },
+      memory_approve: { capacity: 15, refillRate: 3, label: "memory_approve" },
+      memory_reject: { capacity: 15, refillRate: 3, label: "memory_reject" },
     },
   },
   context: {
@@ -134,5 +137,19 @@ export const CONFIG = {
     maxImportantLiterals: 12,
     maxUnionTypes: 8,
     maxInterfaceMembers: 8,
+  },
+  autoApprove: {
+    /** Master switch — when false, proposals go to pending for agent review. */
+    enabled: false,
+    /** Auto-approve proposals at or below this risk level.
+     *  "low" = only low risk auto-approved
+     *  "medium" = low + medium auto-approved (default)
+     *  "high" = low + medium + high auto-approved
+     *  "all" or "critical" = everything auto-approved */
+    maxRiskLevel: "medium",
+    /** Minimum confidence (0-1) for auto-approval. */
+    minConfidence: 0.3,
+    /** Whether to auto-approve link proposals (memory edges + code links). */
+    autoApproveLinks: true,
   },
 };

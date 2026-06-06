@@ -117,7 +117,7 @@ describe("MCP Contract", () => {
   // ─── memory_propose ────────────────────────────────────────
 
   describe("memory_propose", () => {
-    it("should create a proposal and return structured result", () => {
+    it("should create a pending proposal for agent review", () => {
       const result = mcpPropose(db, {
         kind: "code_context",
         text: "MCP test: src/db.ts handles all SQLite operations",
@@ -129,10 +129,10 @@ describe("MCP Contract", () => {
       expect(result.proposal_id).toBeDefined();
       expect(result.status).toBe("pending");
       expect(result.risk_level).toBe("medium");
-      expect(result.message).toContain("Awaiting user approval");
+      expect(result.message).toContain("pending agent review");
     });
 
-    it("should flag critical proposals with warning", () => {
+    it("should keep critical proposals pending", () => {
       const result = mcpPropose(db, {
         kind: "trade_rule",
         text: "MCP test: always validate input before processing trade",
@@ -211,8 +211,9 @@ describe("MCP Contract", () => {
 
       expect(result.status).toBe("pending");
       expect(result.proposal_type).toBe("memory_edge");
-      expect(result.message).toContain("Awaiting user approval");
+      expect(result.message).toContain("pending agent review");
 
+      // Link is NOT active until approved by agent
       const relatedBefore = mcpRelated(db, PROJECT, source.id, 1);
       expect(relatedBefore.some((r) => r.item.id === target.id)).toBe(false);
     });
@@ -256,7 +257,7 @@ describe("MCP Contract", () => {
       expect(related.every((r) => r.depth <= 2)).toBe(true);
     });
 
-    it("should create pending memory code link proposal and find it only after approval", () => {
+    it("should create pending code link proposal for agent review", () => {
       const memory = mcpSearch(db, PROJECT, "indentation")[0]!;
       const result = mcpMemoryCodeLinkPropose(db, {
         projectId: PROJECT,
@@ -270,9 +271,11 @@ describe("MCP Contract", () => {
 
       expect(result.status).toBe("pending");
       expect(result.proposal_type).toBe("memory_code_link");
+      // Code link is NOT active until approved
       expect(mcpCodeSearch(db, PROJECT, "src/cli.ts").length).toBe(0);
 
-      approveMemoryLinkProposal(db, PROJECT, result.proposal_id, "user");
+      // After agent approval
+      approveMemoryLinkProposal(db, PROJECT, result.proposal_id, "mcp:agent");
       const results = mcpCodeSearch(db, PROJECT, "src/cli.ts");
       expect(results.some((r) => r.item.id === memory.id)).toBe(true);
     });
@@ -294,10 +297,10 @@ describe("MCP Contract", () => {
 
   // ─── Proposal → Approval flow end-to-end ──────────────────
 
-  describe("MCP propose → CLI approve flow", () => {
-    it("should complete the full governance cycle", () => {
-      // 1. Agent proposes via MCP
-      const proposalResult = mcpPropose(db, {
+  describe("MCP propose → agent review flow", () => {
+    it("should create pending proposal and complete governance cycle on approval", () => {
+      // 1. Agent proposes via MCP → pending
+      const result = mcpPropose(db, {
         kind: "session_summary",
         text: "E2E test: completed MCP contract test implementation",
         projectId: PROJECT,
@@ -305,10 +308,10 @@ describe("MCP Contract", () => {
         rationale: "End-to-end governance verification",
       });
 
-      expect(proposalResult.status).toBe("pending");
+      expect(result.status).toBe("pending");
 
-      // 2. User approves via CLI
-      const memory = approve(db, PROJECT, proposalResult.proposal_id, "user");
+      // 2. Agent reviews and approves
+      const memory = approve(db, PROJECT, result.proposal_id, "mcp:agent");
       expect(memory).not.toBeNull();
       expect(memory?.status).toBe("active");
 
@@ -377,7 +380,7 @@ describe("MCP Contract", () => {
   // ─── SDD-05: arguments_hash in audit events ─────────────────
 
   describe("SDD-05: arguments_hash in audit", () => {
-    it("should include arguments_hash in proposal audit payload when provided", () => {
+    it("should create pending proposal with arguments_hash in audit", () => {
       const result = mcpPropose(db, {
         kind: "fact",
         text: "SDD-05 audit hash test memory",
@@ -389,7 +392,7 @@ describe("MCP Contract", () => {
 
       expect(result.proposal_id).toBeDefined();
       expect(result.status).toBe("pending");
-      // The proposal should have been created with the hash passed through
+      expect(result.message).toContain("pending agent review");
     });
   });
 });

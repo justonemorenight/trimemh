@@ -234,6 +234,10 @@ export interface ProposeInput {
   targetMemoryId?: string;
   /** SDD-05 §6.1.1: SHA-256 of sorted tool arguments for audit integrity */
   argumentsHash?: string;
+  /** Agent explicitly requests manual review (bypasses auto-approve). */
+  requireReview?: boolean;
+  /** Confidence 0-1, used for auto-approve threshold. */
+  confidence?: number;
 }
 
 export interface CreateMemoryEdgeInput {
@@ -252,6 +256,8 @@ export interface ProposeMemoryEdgeInput extends CreateMemoryEdgeInput {
   proposedBy: string;
   /** SDD-05 §6.1.1: SHA-256 of sorted tool arguments for audit integrity */
   argumentsHash?: string;
+  /** Agent explicitly requests manual review (bypasses auto-approve). */
+  requireReview?: boolean;
 }
 
 export interface CodeEntityInput {
@@ -279,6 +285,8 @@ export interface ProposeMemoryCodeLinkInput extends CreateMemoryCodeLinkInput {
   proposedBy: string;
   /** SDD-05 §6.1.1: SHA-256 of sorted tool arguments for audit integrity */
   argumentsHash?: string;
+  /** Agent explicitly requests manual review (bypasses auto-approve). */
+  requireReview?: boolean;
 }
 
 export interface RelatedMemoryResult {
