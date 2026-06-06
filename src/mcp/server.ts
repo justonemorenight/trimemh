@@ -22,6 +22,8 @@ export async function startMcpServer(db: Database, projectId: string): Promise<v
       capabilities: {
         tools: {},
       },
+      instructions:
+        "triMemh provides persistent local project memory. At the start of a task, call memory_context with the user task and open paths, then memory_search with mode='hybrid' for relevant prior decisions, mistakes, procedures, preferences, and code context. Use memory_code_search for specific files or symbols. Repository state and explicit user instructions override memory.",
     },
   );
 

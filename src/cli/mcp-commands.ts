@@ -5,6 +5,12 @@ import { formatConfigAsJSON, generateMCPConfig } from "../mcp/config-gen";
 import { startMcpServer } from "../mcp/server";
 import { getDb, runMigrations } from "../persistence/db";
 
+function redirectConsoleLogToStderr(): void {
+  console.log = (...args: unknown[]) => {
+    console.error(...args);
+  };
+}
+
 export function registerMcpCommands(program: Command): void {
   program
     .command("mcp")
@@ -14,6 +20,8 @@ export function registerMcpCommands(program: Command): void {
         .description("Start MCP stdio server for agent integration")
         .option("--db <path>", "Custom database path")
         .action(async (opts) => {
+          redirectConsoleLogToStderr();
+
           const config = loadConfig();
           const dbPath = opts.db ?? config.dbPath;
           const db = getDb(dbPath);

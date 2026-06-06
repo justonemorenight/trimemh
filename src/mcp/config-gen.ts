@@ -16,13 +16,15 @@ import type { TriMemhConfig } from "../domain/schema";
 
 // ─── Types ──────────────────────────────────────────────────────────
 
-export type ConfigTarget = "claude-code" | "cursor" | "continue" | "windsurf" | "generic";
+export type ConfigTarget = "claude-code" | "cursor" | "codex" | "continue" | "windsurf" | "generic";
 
 export interface MCPToolConfig {
   /** Command to run the MCP server. */
   command: string;
   /** Arguments for the command. */
   args: string[];
+  /** Working directory for the server process. */
+  cwd?: string;
   /** Environment variables. */
   env?: Record<string, string>;
   /** Transport type. */
@@ -135,6 +137,31 @@ function generateCursor(config: TriMemhConfig): GeneratedConfig {
   };
 }
 
+function generateCodex(config: TriMemhConfig): GeneratedConfig {
+  const { command, args } = resolveTriMemhCommand();
+
+  return {
+    target: "codex",
+    config: {
+      mcp_servers: {
+        trimemh: {
+          command,
+          args: [...args, "mcp", "serve"],
+          cwd: process.cwd(),
+          env: {
+            TRIMEMH_PROJECT_ID: config.projectId,
+            TRIMEMH_DB_PATH: resolveDbPath(config),
+          },
+        },
+      },
+    },
+    installInstructions: [
+      '# Add to ~/.codex/config.toml under "[mcp_servers.trimemh]":',
+      "# Or run: trimemh install --target codex",
+    ].join("\n"),
+  };
+}
+
 function generateContinue(config: TriMemhConfig): GeneratedConfig {
   const { command, args } = resolveTriMemhCommand();
 
@@ -210,6 +237,7 @@ function generateGeneric(config: TriMemhConfig): GeneratedConfig {
 const GENERATORS: Record<ConfigTarget, (config: TriMemhConfig) => GeneratedConfig> = {
   "claude-code": generateClaudeCode,
   cursor: generateCursor,
+  codex: generateCodex,
   continue: generateContinue,
   windsurf: generateWindsurf,
   generic: generateGeneric,

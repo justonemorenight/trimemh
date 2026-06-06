@@ -45,6 +45,7 @@ interface AgentDefinition {
 }
 
 const HOME = homedir();
+const CODEX_PROJECT_CONFIG = join(process.cwd(), ".codex", "config.toml");
 
 const AGENTS: AgentDefinition[] = [
   {
@@ -76,13 +77,14 @@ const AGENTS: AgentDefinition[] = [
   {
     id: "codex",
     name: "OpenAI Codex CLI",
-    target: "generic",
+    target: "codex",
     icon: "🤖",
     detectPaths: [join(HOME, ".codex"), join(HOME, ".config", "codex")],
     detectCommands: ["codex"],
-    configPath: join(HOME, ".codex", "mcp.json"),
-    configKey: "mcpServers",
-    postInstall: "Restart Codex or run 'codex reload'.",
+    configPath: CODEX_PROJECT_CONFIG,
+    configKey: "mcp_servers",
+    postInstall:
+      "Restart Codex in this project, run 'codex reload', or use '/mcp' to confirm trimemh is loaded.",
   },
   {
     id: "copilot",
@@ -183,6 +185,127 @@ export interface InstallResult {
   backupPath?: string; // if existing config was backed up
 }
 
+function tomlString(value: string): string {
+  return JSON.stringify(value);
+}
+
+function tomlStringArray(values: string[]): string {
+  return `[${values.map(tomlString).join(", ")}]`;
+}
+
+const LINE_SPLIT_RE = /\r?\n/;
+const TOML_TABLE_RE = /^\[([^\]]+)\]$/;
+
+function removeCodexTrimemhTables(content: string): string {
+  const lines = content.split(LINE_SPLIT_RE);
+  const kept: string[] = [];
+  let skipping = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const tableMatch = trimmed.match(TOML_TABLE_RE);
+    if (tableMatch) {
+      const tableName = tableMatch[1];
+      skipping =
+        tableName === "mcp_servers.trimemh" || tableName.startsWith("mcp_servers.trimemh.");
+    }
+    if (!skipping) {
+      kept.push(line);
+    }
+  }
+
+  return kept.join("\n").trimEnd();
+}
+
+function codexServerFromConfig(config: Record<string, unknown>): {
+  command: string;
+  args: string[];
+  cwd?: string;
+  env: Record<string, string>;
+} {
+  const mcpServers = config.mcp_servers as Record<string, unknown> | undefined;
+  const server = mcpServers?.trimemh as
+    | { command?: unknown; args?: unknown; env?: unknown }
+    | undefined;
+  if (!server || typeof server.command !== "string" || !Array.isArray(server.args)) {
+    throw new Error("Generated Codex MCP config is missing mcp_servers.trimemh.");
+  }
+
+  const env = server.env && typeof server.env === "object" ? server.env : {};
+  return {
+    command: server.command,
+    args: server.args.filter((arg): arg is string => typeof arg === "string"),
+    cwd: typeof server.cwd === "string" ? server.cwd : undefined,
+    env: Object.fromEntries(
+      Object.entries(env).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    ),
+  };
+}
+
+function formatCodexTrimemhBlock(server: {
+  command: string;
+  args: string[];
+  cwd?: string;
+  env: Record<string, string>;
+}): string {
+  const lines = [
+    "[mcp_servers.trimemh]",
+    `command = ${tomlString(server.command)}`,
+    `args = ${tomlStringArray(server.args)}`,
+    ...(server.cwd ? [`cwd = ${tomlString(server.cwd)}`] : []),
+    "startup_timeout_sec = 20",
+    "tool_timeout_sec = 60",
+    "enabled = true",
+    "",
+    "[mcp_servers.trimemh.env]",
+    ...Object.entries(server.env).map(([key, value]) => `${key} = ${tomlString(value)}`),
+  ];
+  return lines.join("\n");
+}
+
+function installCodexConfig(
+  agent: AgentDefinition,
+  configPath: string,
+  generatedConfig: Record<string, unknown>,
+  hasExistingConfig: boolean,
+): InstallResult {
+  const server = codexServerFromConfig(generatedConfig);
+  const dir = configPath.substring(0, configPath.lastIndexOf("/"));
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+
+  const existingRaw = hasExistingConfig ? readFileSync(configPath, "utf-8") : "";
+  const backupPath = hasExistingConfig ? `${configPath}.backup-${Date.now()}` : undefined;
+  if (backupPath) {
+    writeFileSync(backupPath, existingRaw);
+  }
+
+  const base = removeCodexTrimemhTables(existingRaw);
+  const next = `${base ? `${base}\n\n` : ""}${formatCodexTrimemhBlock(server)}\n`;
+  writeFileSync(configPath, next);
+
+  return {
+    agent,
+    success: true,
+    message: hasExistingConfig
+      ? `Merged into existing config at ${configPath}`
+      : `Created new config at ${configPath}`,
+    created: !hasExistingConfig,
+    backupPath,
+  };
+}
+
+export function formatInstallPreview(memhConfig: TriMemhConfig, detected: DetectedAgent): string {
+  const generated = generateMCPConfig(memhConfig, detected.agent.target);
+  if (detected.agent.id === "codex") {
+    return formatCodexTrimemhBlock(codexServerFromConfig(generated.config));
+  }
+  return JSON.stringify(generated.config, null, 2);
+}
+
 /**
  * Deep merge two JSON objects. Arrays are concatenated.
  */
@@ -245,6 +368,10 @@ export function installForAgent(memhConfig: TriMemhConfig, detected: DetectedAge
     // Generate the memh MCP config
     const generated = generateMCPConfig(memhConfig, agent.target);
     const newConfig = generated.config;
+
+    if (agent.id === "codex") {
+      return installCodexConfig(agent, configPath, newConfig, hasExistingConfig);
+    }
 
     // Ensure parent directory exists
     const dir = configPath.substring(0, configPath.lastIndexOf("/"));

@@ -4,6 +4,7 @@ import { Command } from "commander";
 
 import {
   detectAgents,
+  formatInstallPreview,
   installForAgent,
   printDetection,
   printInstallResults,
@@ -17,8 +18,8 @@ import { registerMcpCommands } from "./cli/mcp-commands";
 import { registerMemoryCommands } from "./cli/memory-commands";
 import { registerProposalCommands } from "./cli/proposal-commands";
 import { withDb } from "./cli/with-db";
+import { formatInitResult, initProject } from "./application/init-use-cases";
 import { loadConfig } from "./infrastructure/config";
-import { formatConfigAsJSON, generateMCPConfig } from "./mcp/config-gen";
 import { indexProject, seedProjectMemories } from "./service";
 
 const program = new Command();
@@ -34,6 +35,37 @@ registerProposalCommands(program);
 registerDedupCommand(program);
 registerGraphCommands(program);
 registerContextCommand(program);
+
+// ─── init ──────────────────────────────────────────────────────────
+
+program
+  .command("init")
+  .description("Initialize triMemh in this project")
+  .option("--dry-run", "Preview project initialization without writing files")
+  .option("--force", "Re-run initialization for an existing triMemh project")
+  .option("--mode <mode>", "Project mode: auto, empty, existing", "auto")
+  .option("--db <path>", "Custom database path")
+  .option("--no-scan", "Skip code scanning")
+  .option("--no-seed", "Skip baseline memory seeding")
+  .option("--no-gitignore", "Do not add .trimemh/ to .gitignore")
+  .action((opts) => {
+    const mode = opts.mode as "auto" | "empty" | "existing";
+    if (!["auto", "empty", "existing"].includes(mode)) {
+      console.error("[triMemh] Invalid mode. Use: auto, empty, or existing.");
+      process.exit(1);
+    }
+
+    const result = initProject({
+      dbPath: opts.db,
+      dryRun: opts.dryRun ?? false,
+      force: opts.force ?? false,
+      mode,
+      scanCode: opts.scan === false ? false : undefined,
+      seed: opts.seed,
+      updateGitignore: opts.gitignore,
+    });
+    console.log(formatInitResult(result));
+  });
 
 // ─── install ───────────────────────────────────────────────────────
 
@@ -54,13 +86,21 @@ program
     if (opts.dryRun) {
       console.log("\n🧪 Dry run — no files will be modified.\n");
       printDetection(detected);
-      for (const d of detected) {
+      const selected = opts.target
+        ? detected.filter((d) => d.agent.id === opts.target.toLowerCase())
+        : detected;
+      if (opts.target && selected.length === 0) {
+        console.error(
+          `\nUnknown agent "${opts.target}". Known: claude, cursor, codex, copilot, aider\n`,
+        );
+        process.exit(1);
+      }
+      for (const d of selected) {
         if (d.installed) {
-          const generated = generateMCPConfig(memhConfig, d.agent.target);
           console.log(`  ${d.agent.icon} ${d.agent.name}:`);
           console.log(`    → ${d.configPath}`);
           console.log(
-            formatConfigAsJSON(generated)
+            formatInstallPreview(memhConfig, d)
               .split("\n")
               .map((l) => `    ${l}`)
               .join("\n"),
