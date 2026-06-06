@@ -1,12 +1,12 @@
 import { z } from "zod";
 
+import { CONFIG } from "../config";
 import { guardString } from "../infrastructure/guardrail";
-import { MAX_STRING_BYTES } from "../infrastructure/sanitize";
 
 export const SearchInputSchema = z.object({
   query: z
     .string()
-    .max(2000)
+    .max(CONFIG.zod.maxQueryLength)
     .refine(
       (s) => {
         try {
@@ -17,12 +17,19 @@ export const SearchInputSchema = z.object({
         }
       },
       {
-        message: `"query" exceeds maximum size of ${MAX_STRING_BYTES} bytes`,
+        message: `"query" exceeds maximum size of ${CONFIG.guardrails.maxStringBytes} bytes`,
       },
     )
     .describe("Search query text"),
   kind: z.string().optional().describe("Filter by memory kind"),
-  limit: z.number().min(1).max(20).default(10).describe("Max results (1-20, server-capped at 5)"),
+  limit: z
+    .number()
+    .min(1)
+    .max(CONFIG.mcp.maxSearchLimitSchema)
+    .default(CONFIG.mcp.defaultSearchLimit)
+    .describe(
+      `Max results (1-${CONFIG.mcp.maxSearchLimitSchema}, server-capped at ${CONFIG.mcp.maxSearchResults})`,
+    ),
   mode: z
     .enum(["fts", "vector", "hybrid"])
     .default("fts")
@@ -52,7 +59,7 @@ export const ProposeInputSchema = z.object({
         }
       },
       {
-        message: `"text" exceeds maximum size of ${MAX_STRING_BYTES} bytes`,
+        message: `"text" exceeds maximum size of ${CONFIG.guardrails.maxStringBytes} bytes`,
       },
     )
     .describe("Proposed memory text (max 10 KB)"),
@@ -72,27 +79,27 @@ export const ProposeInputSchema = z.object({
         }
       },
       {
-        message: `"rationale" exceeds maximum size of ${MAX_STRING_BYTES} bytes`,
+        message: `"rationale" exceeds maximum size of ${CONFIG.guardrails.maxStringBytes} bytes`,
       },
     )
     .describe("Why this memory should exist"),
 });
 
 export const GetInputSchema = z.object({
-  id: z.string().max(256).describe("Memory ID"),
+  id: z.string().max(CONFIG.zod.maxLineageIds).describe("Memory ID"),
 });
 
 export const RelatedInputSchema = z.object({
-  id: z.string().max(256).describe("Memory ID"),
+  id: z.string().max(CONFIG.zod.maxLineageIds).describe("Memory ID"),
   depth: z.number().min(1).max(2).default(1).describe("Traversal depth, capped at 2"),
 });
 
 export const MemoryLinkProposeInputSchema = z.object({
-  source_memory_id: z.string().max(256).describe("Source memory ID"),
+  source_memory_id: z.string().max(CONFIG.zod.maxLineageIds).describe("Source memory ID"),
   relation: z
     .string()
     .describe("supports, contradicts, depends_on, derived_from, supersedes, relates_to"),
-  target_memory_id: z.string().max(256).describe("Target memory ID"),
+  target_memory_id: z.string().max(CONFIG.zod.maxLineageIds).describe("Target memory ID"),
   rationale: z
     .string()
     .optional()
@@ -109,7 +116,7 @@ export const MemoryLinkProposeInputSchema = z.object({
         }
       },
       {
-        message: `"rationale" exceeds maximum size of ${MAX_STRING_BYTES} bytes`,
+        message: `"rationale" exceeds maximum size of ${CONFIG.guardrails.maxStringBytes} bytes`,
       },
     )
     .describe("Why this link should exist"),
@@ -117,7 +124,7 @@ export const MemoryLinkProposeInputSchema = z.object({
 });
 
 export const MemoryCodeLinkProposeInputSchema = z.object({
-  memory_id: z.string().max(256).describe("Memory ID"),
+  memory_id: z.string().max(CONFIG.zod.maxLineageIds).describe("Memory ID"),
   path: z
     .string()
     .min(1)
@@ -131,7 +138,7 @@ export const MemoryCodeLinkProposeInputSchema = z.object({
         }
       },
       {
-        message: `"path" exceeds maximum size of ${MAX_STRING_BYTES} bytes`,
+        message: `"path" exceeds maximum size of ${CONFIG.guardrails.maxStringBytes} bytes`,
       },
     )
     .describe("Code file path"),
@@ -140,10 +147,18 @@ export const MemoryCodeLinkProposeInputSchema = z.object({
     .default("relates_to")
     .describe("relates_to, documents, warns_about, implements, depends_on"),
   entity_type: z.string().default("file").describe("file, function, class, module, section"),
-  symbol: z.string().max(512).optional().describe("Function/class/module symbol"),
+  symbol: z
+    .string()
+    .max(CONFIG.zod.maxSymbolLength)
+    .optional()
+    .describe("Function/class/module symbol"),
   line_start: z.number().int().optional().describe("Start line"),
   line_end: z.number().int().optional().describe("End line"),
-  fingerprint: z.string().max(256).optional().describe("Code fingerprint/hash"),
+  fingerprint: z
+    .string()
+    .max(CONFIG.zod.maxFingerprintLength)
+    .optional()
+    .describe("Code fingerprint/hash"),
   rationale: z
     .string()
     .optional()
@@ -160,7 +175,7 @@ export const MemoryCodeLinkProposeInputSchema = z.object({
         }
       },
       {
-        message: `"rationale" exceeds maximum size of ${MAX_STRING_BYTES} bytes`,
+        message: `"rationale" exceeds maximum size of ${CONFIG.guardrails.maxStringBytes} bytes`,
       },
     )
     .describe("Why this link should exist"),
@@ -168,23 +183,27 @@ export const MemoryCodeLinkProposeInputSchema = z.object({
 });
 
 export const CodeSearchInputSchema = z.object({
-  path: z.string().min(1).max(1024).describe("Code file path"),
-  symbol: z.string().max(512).optional().describe("Function/class/module symbol"),
+  path: z.string().min(1).max(CONFIG.zod.maxPathLength).describe("Code file path"),
+  symbol: z
+    .string()
+    .max(CONFIG.zod.maxSymbolLength)
+    .optional()
+    .describe("Function/class/module symbol"),
 });
 
 export const RetrieveInputSchema = z.object({
   memory_id: z
     .string()
-    .max(256)
+    .max(CONFIG.zod.maxLineageIds)
     .describe("Memory ID to retrieve full text for (from a deferred/compressed detail)"),
 });
 
 export const FeedbackInputSchema = z.object({
-  memory_id: z.string().max(256).describe("Memory ID to provide feedback for"),
+  memory_id: z.string().max(CONFIG.zod.maxLineageIds).describe("Memory ID to provide feedback for"),
   useful: z.boolean().describe("Whether this memory was useful for the current task"),
   reason: z
     .string()
-    .max(500)
+    .max(CONFIG.zod.maxMemoryRationale)
     .optional()
     .describe("Why it was (not) useful — helps improve future retrieval"),
 });
@@ -192,7 +211,7 @@ export const FeedbackInputSchema = z.object({
 export const ContextInputSchema = z.object({
   query: z
     .string()
-    .max(2000)
+    .max(CONFIG.zod.maxQueryLength)
     .optional()
     .refine(
       (s) => {
@@ -207,23 +226,23 @@ export const ContextInputSchema = z.object({
         }
       },
       {
-        message: `"query" exceeds maximum size of ${MAX_STRING_BYTES} bytes`,
+        message: `"query" exceeds maximum size of ${CONFIG.guardrails.maxStringBytes} bytes`,
       },
     )
     .describe("Current user/agent task text used for semantic and operational memory triggers"),
   open_paths: z
-    .array(z.string().max(1024))
+    .array(z.string().max(CONFIG.zod.maxPathLength))
     .default([])
     .describe("Open code file paths used for code-linked memory triggers"),
   include_lineage_for_ids: z
-    .array(z.string().max(256))
+    .array(z.string().max(CONFIG.zod.maxLineageIds))
     .default([])
     .describe("Memory IDs whose one-turn lineage/audit context should be included"),
   model_context_tokens: z
     .number()
     .int()
-    .min(1000)
-    .max(1000000)
-    .default(32000)
+    .min(CONFIG.context.minModelTokens)
+    .max(CONFIG.context.maxModelTokens)
+    .default(CONFIG.context.defaultModelTokens)
     .describe("Model context window tokens; memory context is capped to 10%"),
 });

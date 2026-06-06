@@ -8,7 +8,17 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["src/**", "tests/**", "scripts/**", "package.json", "tsconfig.json", "README.md"]
+    "includes": [
+      "src/**",
+      "tests/**",
+      "scripts/**",
+      "*.json",
+      "*.jsonc",
+      "*.md",
+      "LICENSE",
+      ".gitignore",
+      ".gitattributes"
+    ]
   },
   "formatter": {
     "enabled": true,
@@ -138,7 +148,7 @@
             "useAwait": "off"
           },
           "style": {
-            "noNonNullAssertion": "warn",
+            "noNonNullAssertion": "off",
             "useTemplate": "warn"
           },
           "performance": {

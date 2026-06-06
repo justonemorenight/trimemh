@@ -18,6 +18,7 @@ import type { Database } from "bun:sqlite";
 import { statSync, watch } from "node:fs";
 import { relative, resolve } from "node:path";
 
+import { CONFIG } from "../config";
 import { getLogger } from "../infrastructure/logging";
 import { createOrGetCodeEntity } from "../service";
 import { parseFile } from "./code-parser";
@@ -56,10 +57,10 @@ export interface WatcherStats {
 
 export const DEFAULT_WATCHER_CONFIG: WatcherConfig = {
   projectRoot: process.cwd(),
-  debounceMs: 2000,
+  debounceMs: CONFIG.codeIntel.watcherDebounceMs,
   ignore: ["node_modules", ".git", ".trimemh", "dist", "build", ".next", "__pycache__", "*.lock"],
   extensions: [".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".rs"],
-  maxFileSize: 1_000_000, // 1 MB
+  maxFileSize: CONFIG.codeIntel.watcherMaxFileSizeBytes, // 1 MB
 };
 
 // ─── File Watcher ───────────────────────────────────────────────────

@@ -131,6 +131,22 @@ describe("Database", () => {
     expect(row.journal_mode).toBe("wal");
   });
 
+  it("should apply write-throughput SQLite pragmas", () => {
+    const synchronous = db.query("PRAGMA synchronous;").get() as { synchronous: number };
+    const walAutoCheckpoint = db.query("PRAGMA wal_autocheckpoint;").get() as {
+      wal_autocheckpoint: number;
+    };
+    const journalSizeLimit = db.query("PRAGMA journal_size_limit;").get() as {
+      journal_size_limit: number;
+    };
+    const tempStore = db.query("PRAGMA temp_store;").get() as { temp_store: number };
+
+    expect(synchronous.synchronous).toBe(1);
+    expect(walAutoCheckpoint.wal_autocheckpoint).toBe(1000);
+    expect(journalSizeLimit.journal_size_limit).toBe(67108864);
+    expect(tempStore.temp_store).toBe(2);
+  });
+
   it("should enforce unique content_hash per project", () => {
     const now = new Date().toISOString();
     db.run(

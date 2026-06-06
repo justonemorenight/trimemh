@@ -4,10 +4,12 @@ import { dirname } from "node:path";
 
 import * as sqliteVec from "sqlite-vec";
 
+import { CONFIG } from "../config";
 import { registerUdfCosineSimilarity } from "../retrieval/vector";
 
 let db: Database | null = null;
 let customSqliteConfigured = false;
+const writeTransactionDepth = new WeakMap<Database, number>();
 
 const SQLITE_VEC_DIMENSIONS = 384;
 
@@ -78,12 +80,47 @@ export function getDb(dbPath: string): Database {
 
   registerUdfCosineSimilarity(db);
   db.run("PRAGMA journal_mode = WAL;");
-  db.run("PRAGMA foreign_keys = ON;");
-  db.run("PRAGMA busy_timeout = 5000;");
   db.run("PRAGMA synchronous = NORMAL;");
-  db.run("PRAGMA cache_size = -2000;");
+  db.run("PRAGMA foreign_keys = ON;");
+  db.run("PRAGMA temp_store = MEMORY;");
+  db.run(`PRAGMA busy_timeout = ${CONFIG.db.busyTimeoutMs};`);
+  db.run(`PRAGMA cache_size = ${CONFIG.db.cacheSizePages};`);
+  db.run(`PRAGMA wal_autocheckpoint = ${CONFIG.db.walAutoCheckpointPages};`);
+  db.run(`PRAGMA journal_size_limit = ${CONFIG.db.journalSizeLimitBytes};`);
+  db.run(`PRAGMA mmap_size = ${CONFIG.db.mmapSizeBytes};`);
 
   return db;
+}
+
+export function withWriteTransaction<T>(database: Database, fn: () => T): T {
+  const depth = writeTransactionDepth.get(database) ?? 0;
+  if (depth > 0) {
+    writeTransactionDepth.set(database, depth + 1);
+    try {
+      return fn();
+    } finally {
+      writeTransactionDepth.set(database, depth);
+    }
+  }
+
+  writeTransactionDepth.set(database, 1);
+  database.run("BEGIN IMMEDIATE;");
+  try {
+    const result = fn();
+    database.run("COMMIT;");
+    return result;
+  } catch (err) {
+    try {
+      database.run("ROLLBACK;");
+    } finally {
+      writeTransactionDepth.delete(database);
+    }
+    throw err;
+  } finally {
+    if ((writeTransactionDepth.get(database) ?? 0) === 1) {
+      writeTransactionDepth.delete(database);
+    }
+  }
 }
 
 // ─── Close database ────────────────────────────────────────────────

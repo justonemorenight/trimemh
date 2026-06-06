@@ -10,6 +10,7 @@
  * Typical memory footprint: <50 MB for 10K cached items.
  */
 
+import { CONFIG } from "../config";
 import type { MemoryItem } from "../domain/schema";
 
 // ─── LRU Node ────────────────────────────────────────────────────────
@@ -31,7 +32,7 @@ export class MemoryItemCache {
   private hits = 0;
   private misses = 0;
 
-  constructor(maxSize = 500) {
+  constructor(maxSize = CONFIG.cache.memoryItemMaxSize) {
     this.maxSize = maxSize;
   }
 
@@ -172,7 +173,7 @@ export class QueryCache {
   private hits = 0;
   private misses = 0;
 
-  constructor(defaultTTLMs = 30_000) {
+  constructor(defaultTTLMs = CONFIG.cache.queryDefaultTtlMs) {
     this.defaultTTL = defaultTTLMs;
   }
 
@@ -285,14 +286,14 @@ let queryCacheInstance: QueryCache | null = null;
 
 export function getMemoryCache(maxSize?: number): MemoryItemCache {
   if (!memoryCacheInstance) {
-    memoryCacheInstance = new MemoryItemCache(maxSize ?? 500);
+    memoryCacheInstance = new MemoryItemCache(maxSize ?? CONFIG.cache.memoryItemMaxSize);
   }
   return memoryCacheInstance;
 }
 
 export function getQueryCache(defaultTTLMs?: number): QueryCache {
   if (!queryCacheInstance) {
-    queryCacheInstance = new QueryCache(defaultTTLMs ?? 30_000);
+    queryCacheInstance = new QueryCache(defaultTTLMs ?? CONFIG.cache.queryDefaultTtlMs);
   }
   return queryCacheInstance;
 }

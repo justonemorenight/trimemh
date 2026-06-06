@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
+import { CONFIG } from "../config";
 import { assembleMemoryContext } from "../context/context-runtime";
 import type {
   CodeEntityType,
@@ -107,11 +108,11 @@ export function registerMemoryTools(
                 ? `\n  related:\n${r.related
                     .map(
                       (rel) =>
-                        `    - [${rel.id.slice(0, 8)}] ${rel.direction} ${rel.relation}: ${rel.text.slice(0, 80)}${rel.text.length > 80 ? "…" : ""}`,
+                        `    - [${rel.id.slice(0, CONFIG.mcp.shortIdLength)}] ${rel.direction} ${rel.relation}: ${rel.text.slice(0, CONFIG.mcp.snippetLength)}${rel.text.length > CONFIG.mcp.snippetLength ? "…" : ""}`,
                     )
                     .join("\n")}`
                 : "";
-              return `[${r.id.slice(0, 8)}] (${r.kind}, confidence: ${r.confidence})\n  ${r.snippet}\n  source: ${r.source} | created: ${r.created_at?.slice(0, 10) ?? "unknown"}${related}`;
+              return `[${r.id.slice(0, CONFIG.mcp.shortIdLength)}] (${r.kind}, confidence: ${r.confidence})\n  ${r.snippet}\n  source: ${r.source} | created: ${r.created_at?.slice(0, 10) ?? "unknown"}${related}`;
             })
             .join("\n\n"),
         );
@@ -220,7 +221,7 @@ export function registerMemoryTools(
           related
             .map(
               (r) =>
-                `[${r.item.id.slice(0, 8)}] depth ${r.depth} | ${r.direction} ${r.edge.relation} | ${r.item.kind}\n  ${r.item.text}`,
+                `[${r.item.id.slice(0, CONFIG.mcp.shortIdLength)}] depth ${r.depth} | ${r.direction} ${r.edge.relation} | ${r.item.kind}\n  ${r.item.text}`,
             )
             .join("\n\n"),
         );
@@ -441,7 +442,7 @@ export function registerMemoryTools(
           results
             .map(
               (r) =>
-                `[${r.item.id.slice(0, 8)}] ${r.link.relation} ${r.entity.path}${r.entity.symbol ? `#${r.entity.symbol}` : ""}\n  ${r.item.text}`,
+                `[${r.item.id.slice(0, CONFIG.mcp.shortIdLength)}] ${r.link.relation} ${r.entity.path}${r.entity.symbol ? `#${r.entity.symbol}` : ""}\n  ${r.item.text}`,
             )
             .join("\n\n"),
         );
@@ -670,7 +671,7 @@ export function registerMemoryTools(
         });
 
         const msg = [
-          `Feedback recorded for ${memory_id.slice(0, 8)}`,
+          `Feedback recorded for ${memory_id.slice(0, CONFIG.mcp.shortIdLength)}`,
           `Score: ${result.previousScore} → ${result.newScore} (${result.direction})`,
           `Total feedback events: ${result.totalFeedbackEvents}`,
         ];

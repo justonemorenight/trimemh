@@ -9,6 +9,8 @@
  * Thread-safe for single-process Bun runtime (no multi-threading).
  */
 
+import { CONFIG } from "../config";
+
 // ─── Types ──────────────────────────────────────────────────────────
 
 export interface RateLimitConfig {
@@ -33,61 +35,7 @@ export interface RateLimitResult {
   remainingTokens: number;
 }
 
-// ─── Default tool limits ────────────────────────────────────────────
-
-export const DEFAULT_TOOL_LIMITS: Record<string, RateLimitConfig> = {
-  memory_search: {
-    capacity: 30,
-    refillRate: 5, // 5 tokens/sec → 30 burst, sustained 5 req/s
-    label: "memory_search",
-  },
-  memory_hybrid_search: {
-    capacity: 20,
-    refillRate: 3, // embedding computation is expensive
-    label: "memory_hybrid_search",
-  },
-  memory_propose: {
-    capacity: 10,
-    refillRate: 1,
-    label: "memory_propose",
-  },
-  memory_get: {
-    capacity: 60,
-    refillRate: 10,
-    label: "memory_get",
-  },
-  memory_stats: {
-    capacity: 20,
-    refillRate: 5,
-    label: "memory_stats",
-  },
-  memory_related: {
-    capacity: 20,
-    refillRate: 5,
-    label: "memory_related",
-  },
-  memory_code_search: {
-    capacity: 20,
-    refillRate: 5,
-    label: "memory_code_search",
-  },
-  memory_link_propose: {
-    capacity: 10,
-    refillRate: 1,
-    label: "memory_link_propose",
-  },
-  memory_code_link_propose: {
-    capacity: 10,
-    refillRate: 1,
-    label: "memory_code_link_propose",
-  },
-};
-
-export const DEFAULT_CONFIG: RateLimitConfig = {
-  capacity: 30,
-  refillRate: 5,
-  label: "default",
-};
+export const DEFAULT_TOOL_LIMITS: Record<string, RateLimitConfig> = CONFIG.rateLimit.tools;
 
 // ─── Rate limiter implementation ────────────────────────────────────
 
@@ -104,7 +52,7 @@ export class RateLimiter {
    * Consumes one token if allowed.
    */
   check(toolName: string): RateLimitResult {
-    const config = this.configs[toolName] ?? DEFAULT_CONFIG;
+    const config = this.configs[toolName] ?? CONFIG.rateLimit.defaultConfig;
     const state = this.getOrCreateBucket(toolName, config);
     const now = nowSeconds();
 
@@ -145,7 +93,7 @@ export class RateLimiter {
   snapshot(): Record<string, { tokens: number; capacity: number }> {
     const result: Record<string, { tokens: number; capacity: number }> = {};
     for (const [tool, state] of this.buckets) {
-      const config = this.configs[tool] ?? DEFAULT_CONFIG;
+      const config = this.configs[tool] ?? CONFIG.rateLimit.defaultConfig;
       result[tool] = {
         tokens: Math.floor(state.tokens),
         capacity: config.capacity,
@@ -181,7 +129,7 @@ export function getRateLimiter(overrides?: Record<string, Partial<RateLimitConfi
   }
 
   const merged: Record<string, RateLimitConfig> = {};
-  for (const [tool, defaults] of Object.entries(DEFAULT_TOOL_LIMITS)) {
+  for (const [tool, defaults] of Object.entries(CONFIG.rateLimit.tools)) {
     const override = overrides?.[tool];
     merged[tool] = {
       capacity: override?.capacity ?? defaults.capacity,

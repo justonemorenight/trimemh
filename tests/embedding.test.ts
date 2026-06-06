@@ -81,7 +81,6 @@ describe("embedding serialization", () => {
     expect(restored).toBeInstanceOf(Float32Array);
     expect(restored.length).toBe(original.length);
     for (let i = 0; i < original.length; i++) {
-      // biome-ignore lint/style/noNonNullAssertion: warning suppression
       expect(restored[i]!).toBeCloseTo(original[i]!, 5);
     }
   });

@@ -1,3 +1,4 @@
+import { CONFIG } from "../config";
 /**
  * Code Parser — Regex-based fallback with tree-sitter bridge (Phase 3)
  *
@@ -386,7 +387,7 @@ const EXTRACTORS: Record<string, RegexExtractor[]> = {
 // ─── Main API ───────────────────────────────────────────────────────
 
 const DEFAULT_OPTIONS: CodeParseOptions = {
-  maxEntities: 200,
+  maxEntities: CONFIG.codeIntel.parserMaxEntities,
   includeSections: false,
 };
 

@@ -1,3 +1,4 @@
+import { CONFIG } from "../config";
 /**
  * Intelligent Memory Chunking (Phase 2 — Intelligence Upgrade)
  *
@@ -55,9 +56,9 @@ export interface ChunkingConfig {
 }
 
 export const DEFAULT_CHUNK_CONFIG: ChunkingConfig = {
-  maxChunkWords: 150,
-  overlapSentences: 1,
-  minWordsForChunking: 300,
+  maxChunkWords: CONFIG.chunking.maxChunkWords,
+  overlapSentences: CONFIG.chunking.overlapSentences,
+  minWordsForChunking: CONFIG.chunking.minWordsForChunking,
 };
 
 // ─── Sentence splitting ─────────────────────────────────────────────
@@ -244,8 +245,8 @@ export function rankChunks(chunks: TextChunk[], query: string): RankedChunk[] {
   }
 
   // Score each chunk
-  const k1 = 1.2; // BM25 term saturation
-  const b = 0.75; // length normalization
+  const k1 = CONFIG.chunking.bm25K1; // BM25 term saturation
+  const b = CONFIG.chunking.bm25B; // length normalization
   const avgLen = chunks.reduce((sum, c) => sum + c.wordCount, 0) / Math.max(1, totalChunks);
 
   const ranked: RankedChunk[] = chunks.map((chunk, i) => {
@@ -274,8 +275,8 @@ export function rankChunks(chunks: TextChunk[], query: string): RankedChunk[] {
  */
 export function selectTopChunks(
   ranked: RankedChunk[],
-  maxChunks = 3,
-  wordBudget = 500,
+  maxChunks = CONFIG.chunking.maxDetailChunks,
+  wordBudget = CONFIG.chunking.detailWordBudget,
 ): RankedChunk[] {
   const selected: RankedChunk[] = [];
   let wordTotal = 0;

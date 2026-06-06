@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 
+import { CONFIG } from "../config";
 import { classifyTaskContext, detectsOperationalContext } from "../context/compiler";
 import type { CodeMemoryResult, RecallResult } from "../domain/schema";
 import { getMemoriesForCodeRows, searchMemoryFts } from "../persistence/repository";
@@ -55,7 +56,7 @@ function applyRerank(
     return reranked.map((r, i) => ({
       item: r.item,
       rank: i + 1,
-      snippet: r.item.text.slice(0, 200),
+      snippet: r.item.text.slice(0, CONFIG.service.snippetLength),
     }));
   }
 
@@ -120,7 +121,7 @@ function applyScoring(
   return ranked.map((r, i) => ({
     item: r.item,
     rank: i + 1,
-    snippet: r.item.text.slice(0, 200),
+    snippet: r.item.text.slice(0, CONFIG.service.snippetLength),
   }));
 }
 
@@ -187,7 +188,7 @@ export function recall(
     ).map((r, i) => ({
       item: r.item,
       rank: i + 1,
-      snippet: r.item.text.slice(0, 200),
+      snippet: r.item.text.slice(0, CONFIG.service.snippetLength),
     }));
   }
 

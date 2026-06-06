@@ -18,6 +18,7 @@
 
 import type { Database } from "bun:sqlite";
 
+import { CONFIG } from "../config";
 import type { MemoryItem } from "../domain/schema";
 import { getMemoriesWithEmbeddings } from "../persistence/repository";
 import {
@@ -79,7 +80,7 @@ export function detectAgentIdentity(): AgentIdentity {
 
   let agent = "unknown";
   if (process.env.CLAUDE_CODE_SESSION_ID) {
-    agent = "claude-code";
+    agent = CONFIG.agents.defaultClaudeAgent;
   } else if (process.env.CODEX_SESSION_ID) {
     agent = "codex";
   } else if (process.env.CURSOR_SESSION_ID) {
@@ -175,8 +176,10 @@ export function findCrossAgentDuplicates(
  */
 export function sharedContextStats(db: Database, projectId: string): SharedContextStats {
   // biome-ignore lint/style/noCommonJs: circular dependency workaround
-  const { listMemories } = require("./repository");
-  const memories: MemoryItem[] = listMemories(db, projectId, { limit: 10_000 });
+  const { listMemoryItems } = require("../persistence/repository");
+  const memories: MemoryItem[] = listMemoryItems(db, projectId, {
+    limit: CONFIG.retrieval.crossAgentDumpLimit,
+  });
 
   const byAgent: Record<string, number> = {};
   const byVisibility: Record<string, number> = { private: 0, team: 0, public: 0 };

@@ -14,6 +14,7 @@
  * with the `memory_retrieve` MCP tool to fetch the original on demand.
  */
 
+import { CONFIG } from "../config";
 import type { MemoryItem } from "../domain/schema";
 import { guardXmlPayload } from "../infrastructure/guardrail";
 import { truncateWords } from "../infrastructure/sanitize";
@@ -50,21 +51,6 @@ export interface CcrStore {
   /** Number of details sent in full (no compression needed) */
   fullCount: number;
 }
-
-// ─── Configuration ──────────────────────────────────────────────────
-
-export const CCR_CONFIG = {
-  /** Max words before a detail is considered for compression */
-  shortThresholdWords: 300,
-  /** Max words for medium compression (head+tail sentences) */
-  mediumThresholdWords: 1000,
-  /** Max words for the display summary (medium compression) */
-  mediumDisplayWords: 80,
-  /** Max words for the display summary (long compression) */
-  longDisplayWords: 40,
-  /** Max words for full-text (no compression) display */
-  fullTextMaxWords: 300,
-} as const;
 
 // ─── Sentence splitting ─────────────────────────────────────────────
 
@@ -177,11 +163,11 @@ function compressLong(text: string, memoryId: string): CompressionResult {
   const entityLine = entities.length > 0 ? `\n⤷ entities: ${entities.join(", ")}` : "";
 
   const summary =
-    truncateWords(firstSentence, CCR_CONFIG.longDisplayWords) +
+    truncateWords(firstSentence, CONFIG.ccr.longDisplayWords) +
     `\n⤷ [${totalWords} words compressed — retrieve with: memory_retrieve("${memoryId}")]` +
     entityLine +
     "\n" +
-    truncateWords(lastSentence, CCR_CONFIG.longDisplayWords);
+    truncateWords(lastSentence, CONFIG.ccr.longDisplayWords);
 
   const fullTokens = Math.ceil(text.length / 4);
   const summaryTokens = Math.ceil(summary.length / 4);
@@ -222,8 +208,8 @@ export function compressDetail(
 ): CompressionResult {
   const text = item.text;
   const words = wordCount(text);
-  const shortThreshold = opts.shortThreshold ?? CCR_CONFIG.shortThresholdWords;
-  const mediumThreshold = opts.mediumThreshold ?? CCR_CONFIG.mediumThresholdWords;
+  const shortThreshold = opts.shortThreshold ?? CONFIG.ccr.shortThresholdWords;
+  const mediumThreshold = opts.mediumThreshold ?? CONFIG.ccr.mediumThresholdWords;
 
   if (words < shortThreshold) {
     return compressShort(text);

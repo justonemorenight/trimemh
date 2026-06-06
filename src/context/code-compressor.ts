@@ -1,5 +1,7 @@
 import ts from "typescript";
 
+import { CONFIG } from "../config";
+
 export interface CodeCompressionResult {
   display: string;
   compressed: boolean;
@@ -218,7 +220,7 @@ function formatFunctionLike(
 function summarizeMembers(
   members: ts.NodeArray<ts.TypeElement | ts.ClassElement>,
   sourceFile: ts.SourceFile,
-  maxMembers = 8,
+  maxMembers = CONFIG.codeCompressor.maxInterfaceMembers,
 ): string {
   const fieldTexts = members
     .slice(0, maxMembers)
@@ -234,10 +236,12 @@ function summarizeTypeNode(node: ts.TypeNode, sourceFile: ts.SourceFile): string
   }
   if (ts.isUnionTypeNode(node)) {
     const sample = node.types
-      .slice(0, 8)
+      .slice(0, CONFIG.codeCompressor.maxUnionTypes)
       .map((type) => oneLine(type.getText(sourceFile)))
       .join(" | ");
-    return node.types.length > 8 ? `${sample} | ... ${node.types.length - 8} more` : sample;
+    return node.types.length > CONFIG.codeCompressor.maxUnionTypes
+      ? `${sample} | ... ${node.types.length - CONFIG.codeCompressor.maxUnionTypes} more`
+      : sample;
   }
   return oneLine(node.getText(sourceFile));
 }
@@ -266,8 +270,13 @@ function formatTypeAlias(node: ts.TypeAliasDeclaration, sourceFile: ts.SourceFil
 
 function formatEnum(node: ts.EnumDeclaration, sourceFile: ts.SourceFile): string {
   const prefix = exportPrefix(node);
-  const members = node.members.slice(0, 12).map((member) => member.name.getText(sourceFile));
-  const suffix = node.members.length > 12 ? `, ... ${node.members.length - 12} more` : "";
+  const members = node.members
+    .slice(0, CONFIG.codeCompressor.maxImportantLiterals)
+    .map((member) => member.name.getText(sourceFile));
+  const suffix =
+    node.members.length > CONFIG.codeCompressor.maxImportantLiterals
+      ? `, ... ${node.members.length - CONFIG.codeCompressor.maxImportantLiterals} more`
+      : "";
   return oneLine(
     `${prefix} enum ${node.name.getText(sourceFile)} { ${members.join(", ")}${suffix} }`,
   );
@@ -327,7 +336,7 @@ function formatClass(node: ts.ClassDeclaration, sourceFile: ts.SourceFile): stri
     .map((member, order) => ({ member, order, score: memberImportanceScore(member, sourceFile) }))
     .sort((a, b) => b.score - a.score || a.order - b.order);
 
-  for (const { member } of members.slice(0, 14)) {
+  for (const { member } of members.slice(0, CONFIG.codeCompressor.maxClassMembers)) {
     if (
       ts.isMethodDeclaration(member) ||
       ts.isConstructorDeclaration(member) ||
@@ -344,8 +353,10 @@ function formatClass(node: ts.ClassDeclaration, sourceFile: ts.SourceFile): stri
       lines.push(`  ${oneLine(`${mods} ${propName}${type};`)} // ${lineRange(sourceFile, member)}`);
     }
   }
-  if (members.length > 14) {
-    lines.push(`  // ... ${members.length - 14} lower-priority members omitted`);
+  if (members.length > CONFIG.codeCompressor.maxClassMembers) {
+    lines.push(
+      `  // ... ${members.length - CONFIG.codeCompressor.maxClassMembers} lower-priority members omitted`,
+    );
   }
   lines.push("}");
   return lines;
@@ -429,7 +440,7 @@ function collectNestedSymbols(sourceFile: ts.SourceFile): string[] {
   };
 
   ts.forEachChild(sourceFile, visit);
-  return lines.slice(0, 24);
+  return lines.slice(0, CONFIG.codeCompressor.maxNestedSymbols);
 }
 
 function collectImportantLiterals(sourceFile: ts.SourceFile): string[] {
@@ -482,10 +493,18 @@ function collectImportantLiterals(sourceFile: ts.SourceFile): string[] {
   ts.forEachChild(sourceFile, visit);
 
   return [
-    routes.size > 0 ? `routes=${[...routes].slice(0, 12).join(",")}` : "",
-    env.size > 0 ? `env=${[...env].slice(0, 12).join(",")}` : "",
-    codes.size > 0 ? `codes=${[...codes].slice(0, 12).join(",")}` : "",
-    sqlTables.size > 0 ? `sql_tables=${[...sqlTables].slice(0, 12).join(",")}` : "",
+    routes.size > 0
+      ? `routes=${[...routes].slice(0, CONFIG.codeCompressor.maxImportantLiterals).join(",")}`
+      : "",
+    env.size > 0
+      ? `env=${[...env].slice(0, CONFIG.codeCompressor.maxImportantLiterals).join(",")}`
+      : "",
+    codes.size > 0
+      ? `codes=${[...codes].slice(0, CONFIG.codeCompressor.maxImportantLiterals).join(",")}`
+      : "",
+    sqlTables.size > 0
+      ? `sql_tables=${[...sqlTables].slice(0, CONFIG.codeCompressor.maxImportantLiterals).join(",")}`
+      : "",
   ].filter(Boolean);
 }
 
@@ -558,7 +577,7 @@ export function compressCodeWithAst(
 
   const nested = collectNestedSymbols(sourceFile);
   const importantLiterals = collectImportantLiterals(sourceFile);
-  const maxLines = opts.maxLines ?? 60;
+  const maxLines = opts.maxLines ?? CONFIG.codeCompressor.maxAstSummaryLines;
   const header = hasParseErrors
     ? `// ${lines.length} lines, partial TypeScript AST summary; implementation bodies deferred`
     : `// ${lines.length} lines, ranked TypeScript AST summary; implementation bodies deferred`;

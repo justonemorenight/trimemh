@@ -11,6 +11,7 @@ import {
   recall,
   reject,
   remember,
+  rememberMany,
   status,
 } from "../src/service";
 
@@ -46,6 +47,7 @@ afterAll(() => {
 });
 
 const PROJECT = "gov-test-project";
+const BATCH_PROJECT = "gov-batch-test-project";
 
 describe("service.ts — Governance", () => {
   // ─── remember ──────────────────────────────────────────────
@@ -118,6 +120,49 @@ describe("service.ts — Governance", () => {
       });
       expect(item.id).toBeDefined();
       expect(item.status).toBe("active");
+    });
+
+    it("should batch write low-risk memories", () => {
+      const items = rememberMany(db, [
+        {
+          kind: "fact",
+          text: "Batch write stores related facts with one transaction",
+          projectId: BATCH_PROJECT,
+        },
+        {
+          kind: "preference",
+          text: "Batch write keeps local persistence fast on populated DBs",
+          projectId: BATCH_PROJECT,
+        },
+      ]);
+
+      expect(items.length).toBe(2);
+      expect(items.every((item) => item.status === "active")).toBe(true);
+      expect(recall(db, BATCH_PROJECT, "Batch write local persistence").length).toBeGreaterThan(0);
+    });
+
+    it("should roll back a batch when one memory is rejected", () => {
+      expect(() =>
+        rememberMany(db, [
+          {
+            kind: "fact",
+            text: "Batch rollback sentinel should not persist",
+            projectId: BATCH_PROJECT,
+          },
+          {
+            kind: "procedure",
+            text: "Batch rollback blocked high-risk write",
+            projectId: BATCH_PROJECT,
+            source: "mcp:agent",
+          },
+        ]),
+      ).toThrow(/Cannot directly write/);
+
+      expect(
+        listAll(db, BATCH_PROJECT).some(
+          (item) => item.text === "Batch rollback sentinel should not persist",
+        ),
+      ).toBe(false);
     });
   });
 

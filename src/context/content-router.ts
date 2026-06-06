@@ -15,6 +15,7 @@
  *   prose    — natural language (CCR smart truncation)
  */
 
+import { CONFIG } from "../config";
 import type { MemoryItem } from "../domain/schema";
 import { guardXmlPayload } from "../infrastructure/guardrail";
 import { truncateWords } from "../infrastructure/sanitize";
@@ -47,9 +48,6 @@ interface ContentSniffer {
   /** Returns confidence 0-1. Higher = more certain match. */
   test: (text: string) => number;
 }
-
-/** Minimum confidence before a non-prose type overrides the prose default. */
-const MIN_NON_PROSE_CONFIDENCE = 0.35;
 
 const SNIFFERS: ContentSniffer[] = [
   {
@@ -398,7 +396,10 @@ export function detectContentType(text: string): ContentMatch {
   for (const sniffer of SNIFFERS) {
     const confidence = sniffer.test(text);
     // Non-prose types need minimum confidence AND must beat the prose baseline
-    if (confidence > bestMatch.confidence && confidence >= MIN_NON_PROSE_CONFIDENCE) {
+    if (
+      confidence > bestMatch.confidence &&
+      confidence >= CONFIG.contentRouter.minNonProseConfidence
+    ) {
       bestMatch = { type: sniffer.type, confidence };
     }
   }
@@ -415,14 +416,17 @@ function detectContentTypeForItem(item: MemoryItem): ContentMatch {
   if (item.kind === "code_context") {
     const codeConfidence = snifferScore("code", item.text);
     const hasStrongCodeMarker =
-      codeConfidence >= MIN_NON_PROSE_CONFIDENCE - 0.1 ||
+      codeConfidence >= CONFIG.contentRouter.minNonProseConfidence - 0.1 ||
       // biome-ignore lint/performance/useTopLevelRegex: warning suppression
       /^\s*```(?:ts|tsx|js|jsx|typescript|javascript)\b/im.test(item.text) ||
       // biome-ignore lint/performance/useTopLevelRegex: warning suppression
       /\b(const|let|var)\s+\w+\s*=|\basync\s+function\b|\bnew\s+[A-Z]\w*\s*\(/.test(item.text);
 
     if (hasStrongCodeMarker && codeConfidence >= 0.2) {
-      return { type: "code", confidence: Math.max(codeConfidence, MIN_NON_PROSE_CONFIDENCE) };
+      return {
+        type: "code",
+        confidence: Math.max(codeConfidence, CONFIG.contentRouter.minNonProseConfidence),
+      };
     }
   }
 
@@ -510,7 +514,7 @@ function renderCode(item: MemoryItem): RenderedContent {
 
   const display = [
     `// ${totalLines} lines, ${skippedLines} body lines compressed`,
-    ...signatures.slice(0, 30), // cap at 30 signature lines
+    ...signatures.slice(0, CONFIG.contentRouter.codeSignatureLines), // cap at codeSignatureLines
     skippedLines > 0
       ? `// ... ${skippedLines} implementation lines deferred (retrieve with memory_retrieve)`
       : "",

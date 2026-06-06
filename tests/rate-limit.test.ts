@@ -21,7 +21,6 @@ describe("RateLimiter", () => {
   });
 
   test("allows up to capacity burst requests", () => {
-    // biome-ignore lint/style/noNonNullAssertion: warning suppression
     const config = DEFAULT_TOOL_LIMITS.memory_search!;
     for (let i = 0; i < config.capacity; i++) {
       const result = limiter.check("memory_search");
@@ -30,7 +29,6 @@ describe("RateLimiter", () => {
   });
 
   test("denies request once bucket is empty", () => {
-    // biome-ignore lint/style/noNonNullAssertion: warning suppression
     const config = DEFAULT_TOOL_LIMITS.memory_search!;
     // Exhaust the bucket
     for (let i = 0; i < config.capacity; i++) {
@@ -42,7 +40,6 @@ describe("RateLimiter", () => {
   });
 
   test("retryAfter is reasonable", () => {
-    // biome-ignore lint/style/noNonNullAssertion: warning suppression
     const config = DEFAULT_TOOL_LIMITS.memory_search!;
     // Exhaust the bucket
     for (let i = 0; i < config.capacity; i++) {
@@ -56,7 +53,6 @@ describe("RateLimiter", () => {
   });
 
   test("each tool has independent buckets", () => {
-    // biome-ignore lint/style/noNonNullAssertion: warning suppression
     const searchConfig = DEFAULT_TOOL_LIMITS.memory_search!;
     // Exhaust memory_search bucket
     for (let i = 0; i < searchConfig.capacity; i++) {
@@ -90,7 +86,6 @@ describe("RateLimiter", () => {
   });
 
   test("remainingTokens decreases with each request", () => {
-    // biome-ignore lint/style/noNonNullAssertion: warning suppression
     const config = DEFAULT_TOOL_LIMITS.memory_search!;
     const result1 = limiter.check("memory_search");
     expect(result1.remainingTokens).toBe(config.capacity - 1);

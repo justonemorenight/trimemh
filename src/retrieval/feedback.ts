@@ -18,6 +18,7 @@
 import type { Database } from "bun:sqlite";
 
 import { audit } from "../application/service-helpers";
+import { CONFIG } from "../config";
 import { getMemoryById, updateMemoryItem } from "../persistence/repository";
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -55,9 +56,9 @@ const FEEDBACK_CONFIG = {
    *  Low alpha = stable scores, resistant to noise. */
   alpha: 0.15,
   /** Feedback applied when useful=true */
-  positiveFeedback: 0.2,
+  positiveFeedback: CONFIG.retrieval.feedbackPositiveScore,
   /** Feedback applied when useful=false */
-  negativeFeedback: -0.15,
+  negativeFeedback: CONFIG.retrieval.feedbackNegativeScore,
   /** Score floor */
   minScore: -1.0,
   /** Score ceiling */
@@ -192,8 +193,11 @@ export function applyBatchFeedback(
  */
 export function decayStaleFeedback(db: Database, projectId: string, halfLifeDays = 30): number {
   // biome-ignore lint/style/noCommonJs: circular dependency workaround
-  const { listMemories } = require("./repository");
-  const memories = listMemories(db, projectId, { status: "active", limit: 10_000 });
+  const { listMemoryItems } = require("../persistence/repository");
+  const memories = listMemoryItems(db, projectId, {
+    status: "active",
+    limit: CONFIG.retrieval.feedbackLimit,
+  });
   let decayed = 0;
   const now = Date.now();
 

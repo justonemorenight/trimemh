@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/bun-%3E%3D1.0.0-f9f1e4?logo=bun&logoColor=white" alt="Bun">
-  <img src="https://img.shields.io/badge/tests-299%20pass-success" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-346%20pass-success" alt="Tests">
   <img src="https://img.shields.io/badge/compression-93%25-brightgreen" alt="Compression">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License">
   <img src="https://img.shields.io/badge/local--first-100%25-orange" alt="Local-first">
@@ -111,25 +111,71 @@ Agent query
 
 ## Performance
 
-Benchmarked against [headroom](https://github.com/chopratejas/headroom) (the leading context compression system) using realistic simulated workloads:
+Measured with realistic local workloads that exercise the compression pipeline, context assembly, retrieval, and local HTTP transport.
 
-| Scenario | Raw Tokens | Compressed | **triMemh** | headroom | vs headroom |
-|---|---|---|---|---|---|
-| **Code Search** (100 results) | 7.1K | 85 | **99%** | 92% | 🟢 +7% |
-| **SRE Incident** (800 log lines) | 31.8K | 1.8K | **94%** | 92% | 🟢 +2% |
-| **Issue Triage** (bug report + code + logs) | 1.5K | 435 | **72%** | 73% | ≈ parity |
-| **Codebase Exploration** (config + source + diff) | 1.5K | 479 | **68%** | 47% | 🟢 +21% |
-| **Architecture Discussion** (prose-heavy) | 1.4K | 113 | **92%** | — | — |
-| **TOTAL** | 43.3K | 2.9K | **93%** | — | — |
+### Token Compression
+
+| Scenario | Raw Tokens | Compressed Tokens | Reduction | What triMemh Keeps |
+|---|---:|---:|---:|---|
+| **Code Search** (100 results) | 7.1K | 85 | **99%** | File paths, symbols, signatures |
+| **SRE Incident** (800 log lines) | 31.8K | 1.8K | **94%** | Error patterns, stack frames, timing signals |
+| **Issue Triage** (bug report + code + logs) | 1.5K | 435 | **72%** | Repro steps, code hints, failure markers |
+| **Codebase Exploration** (config + source + diff) | 1.5K | 479 | **68%** | Changed files, config keys, API surfaces |
+| **Architecture Discussion** (prose-heavy) | 1.4K | 113 | **92%** | Decisions, constraints, retrieval handles |
+| **TOTAL** | 43.3K | 2.9K | **93%** | Dense context with originals retrievable |
 
 ```bash
-# Run the benchmark yourself
+# Run the compression benchmark yourself
 bun run scripts/benchmark.ts
+```
+
+### Local Latency
+
+Measured on a MacBook Pro M3, Bun 1.3.14, sqlite-vec 0.1.9:
+
+| Context Assembly | 50 memories | 200 | 500 | 1,000 |
+|---|---|---|---|---|
+| **p50** | 348μs | 796μs | 1.4ms | 1.6ms |
+
+| Search Mode | p50 | p95 | avg |
+|---|---|---|---|
+| **FTS-only** | 12.8ms | 15.1ms | 13.4ms |
+| **Hybrid (FTS5 + Vector RRF)** | 13.1ms | 14.2ms | 13.2ms |
+
+| Write Workload | Total | Throughput | Avg latency |
+|---|---:|---:|---:|
+| **Empty DB** (50 sequential writes) | 17.1ms | 2,919 writes/s | 342μs |
+| **Populated DB** (~1,000 records, 50 sequential writes) | 97.5ms | 513 writes/s | 1.9ms |
+| **Populated DB batched** (~1,050 records, 50 writes) | 20.4ms | 2,455 writes/s | 407μs |
+
+| Session Simulation | Total | Avg turn | Search p50 |
+|---|---:|---:|---:|
+| **50 turns** | 100ms | 2.0ms | 2.4ms |
+
+```bash
+# Run the latency benchmark yourself
+bun run scripts/bench-realworld.ts
+```
+
+### Local HTTP Transport Hardening
+
+The Streamable HTTP transport is hardened for browser-origin CSRF with strict `Content-Type: application/json` validation and origin-aware CORS behavior.
+
+| Scenario | Requests | Average | p95 | Expected Status |
+|---|---:|---:|---:|---|
+| Unknown-origin JSON preflight | 300 | 0.10ms | 0.11ms | 204 without CORS allow headers |
+| Trusted-origin form-urlencoded POST | 300 | 0.07ms | 0.10ms | 415 |
+| Trusted-origin text/plain POST | 300 | 0.05ms | 0.07ms | 415 |
+| Trusted-origin JSON POST burst | 25 | 0.10ms | 0.09ms | 200 |
+
+```bash
+# Run the HTTP hardening benchmark yourself
+bun run scripts/bench-mcp-transport-csrf.ts
 ```
 
 ### Content Type Detection Accuracy
 
-All 6 content types achieve optimal auto-detection:
+The ContentRouter detects six common memory payload shapes and applies the matching compression strategy automatically:
 
 | Type | Auto | Optimal | Status |
 |---|---|---|---|
@@ -304,22 +350,21 @@ triMemh stores its database at `.trimemh/memory.db` in your project root. Config
 - TypeScript (for AST code compression)
 - **Zero cloud dependencies.** No API keys. No network calls.
 
-## Comparison
+## What triMemh Optimizes For
 
-| Feature | triMemh | headroom | mem0 | MemGPT |
-|---|---|---|---|---|
-| **Local-first** | ✅ | ✅ | ❌ (cloud) | ❌ (cloud) |
-| **Governance (RBAC)** | ✅ | ❌ | ❌ | ❌ |
-| **AST code compression** | ✅ (TS) | ✅ (multi-lang) | ❌ | ❌ |
-| **Reversible compression** | ✅ (CCR) | ✅ (CCR) | ❌ | ❌ |
-| **Agent feedback loop** | ✅ (EMA) | ❌ | ❌ | ✅ |
-| **Cross-agent dedup** | ✅ | ✅ | ❌ | ❌ |
-| **Vector search** | ✅ (sqlite-vec) | ❌ | ✅ | ✅ |
-| **Hybrid search (FTS5+vec)** | ✅ (RRF) | ❌ | ❌ | ❌ |
-| **MCP server** | ✅ (11 tools) | ✅ (3 tools) | ❌ | ❌ |
-| **Deployment** | CLI + MCP | Library + Proxy + MCP | API | API |
-| **Language** | TypeScript (Bun) | Python + Rust | Python | Python |
-| **License** | MIT | Apache 2.0 | — | Apache 2.0 |
+| Capability | What It Does | Current Result |
+|---|---|---|
+| **Local-first memory** | SQLite + sqlite-vec on your machine | No API keys, no cloud dependency |
+| **Context compression** | ContentRouter + CCR + CacheAligner | 93% token reduction across benchmark scenarios |
+| **Fast context assembly** | Builds memory context before each LLM turn | 348μs–1.6ms p50 across 50–1,000 memories |
+| **Hybrid retrieval** | FTS5 + vector search with RRF fusion | 13.1ms p50 in 500-memory real-world benchmark |
+| **Governance** | RBAC, risk checks, proposal approval, audit trail | High/critical writes require explicit approval |
+| **Reversible detail** | Compressed context includes retrieval handles | Original memory text stays locally retrievable |
+| **Agent feedback loop** | EMA usefulness scoring | Useful memories rise; stale memories decay |
+| **Cross-agent memory** | Shared project memory across installed agents | Provenance and dedup keep context coherent |
+| **MCP integration** | Agent-facing tool surface | 11 MCP tools |
+| **HTTP hardening** | Origin validation + strict JSON content type | Browser-simple CSRF POSTs rejected with 415 |
+| **Write throughput** | WAL + batched local persistence path | 2,455 writes/s on populated DB; 513 writes/s sequential |
 
 ## From Source
 
@@ -327,8 +372,10 @@ triMemh stores its database at `.trimemh/memory.db` in your project root. Config
 git clone https://github.com/justonemorenight/trimemh.git
 cd tri-memory
 bun install
-bun test                  # 299 tests, 0 failures
-bun run scripts/benchmark.ts  # Token compression benchmark
+bun test                  # 346 tests, 0 failures
+bun run scripts/benchmark.ts        # Token compression benchmark
+bun run scripts/bench-realworld.ts  # Latency & throughput benchmark
+bun run scripts/bench-retrieval.ts  # Retrieval quality benchmark
 ```
 
 ## Roadmap

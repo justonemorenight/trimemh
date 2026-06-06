@@ -1,21 +1,11 @@
 import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 
+import { CONFIG } from "../config";
 import type { MemoryKind, RiskLevel } from "../domain/schema";
 import { KIND_RISK_MAP } from "../domain/schema";
 import { insertAuditEvent } from "../persistence/repository";
-import {
-  MAX_REQUEST_BYTES,
-  MAX_STRING_BYTES,
-  hashArguments,
-  sanitizeOutput,
-  sanitizeXmlPayload,
-  validateStringSize,
-} from "./sanitize";
-
-export const MAX_MCP_SEARCH_RESULTS = 5;
-export const MAX_HTTP_SEARCH_RESULTS = 100;
-export const MAX_OUTPUT_WORDS = 200;
+import { hashArguments, sanitizeOutput, sanitizeXmlPayload, validateStringSize } from "./sanitize";
 
 export type GuardrailSurface = "service" | "cli" | "mcp" | "api" | "compiler";
 
@@ -97,7 +87,7 @@ export function guardString(
   fieldName: string,
   opts: { maxBytes?: number; maxChars?: number } = {},
 ): string {
-  const maxBytes = opts.maxBytes ?? MAX_STRING_BYTES;
+  const maxBytes = opts.maxBytes ?? CONFIG.guardrails.maxStringBytes;
   const sizeError = validateStringSize(value, maxBytes, fieldName);
   if (sizeError) {
     throw new GuardrailViolation("input_string_too_large", sizeError, 413);
@@ -118,7 +108,7 @@ export function guardRequestPayload(input: {
   maxBytes?: number;
 }): unknown {
   const serialized = JSON.stringify(input.payload ?? {});
-  const maxBytes = input.maxBytes ?? MAX_REQUEST_BYTES;
+  const maxBytes = input.maxBytes ?? CONFIG.guardrails.maxRequestBytes;
   const size = byteLength(serialized);
   if (size > maxBytes) {
     throw new GuardrailViolation(
@@ -155,8 +145,9 @@ export function maskSensitiveText(text: string): string {
   return masked;
 }
 
-export function guardOutput(text: string, maxWords: number = MAX_OUTPUT_WORDS): string {
-  return sanitizeOutput(maskSensitiveText(text), maxWords);
+export function guardOutput(text: string, maxWords?: number): string {
+  const effectiveMaxWords = maxWords ?? CONFIG.guardrails.maxOutputWords;
+  return sanitizeOutput(maskSensitiveText(text), effectiveMaxWords);
 }
 
 export function guardXmlPayload(text: string): string {
@@ -164,7 +155,8 @@ export function guardXmlPayload(text: string): string {
 }
 
 export function capSearchLimit(limit: number | undefined, surface: "mcp" | "api" = "mcp"): number {
-  const max = surface === "mcp" ? MAX_MCP_SEARCH_RESULTS : MAX_HTTP_SEARCH_RESULTS;
+  const max =
+    surface === "mcp" ? CONFIG.mcp.maxSearchResults : CONFIG.guardrails.maxHttpSearchResults;
   if (!Number.isFinite(limit ?? NaN)) {
     return max;
   }

@@ -1,3 +1,5 @@
+import { CONFIG } from "../config";
+
 /**
  * Query Expansion (P1 — Accuracy Upgrade)
  *
@@ -63,10 +65,10 @@ const SYNONYM_MAP: Record<string, string[]> = {
 };
 
 /** Maximum synonyms per query term to prevent query explosion. */
-const MAX_SYNONYMS_PER_TERM = 2;
+const MAX_SYNONYMS_PER_TERM = CONFIG.retrieval.expansionMaxSynonymsPerTerm;
 
 /** Maximum total terms in the expanded query. */
-const MAX_EXPANDED_TERMS = 30;
+const MAX_EXPANDED_TERMS = CONFIG.retrieval.expansionMaxTerms;
 
 // ─── Negation detection ─────────────────────────────────────────────
 

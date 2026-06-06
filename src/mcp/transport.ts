@@ -22,6 +22,7 @@
 
 import type { Database } from "bun:sqlite";
 
+import { CONFIG } from "../config";
 import { assembleMemoryContext } from "../context/context-runtime";
 import type {
   CodeEntityType,
@@ -87,6 +88,11 @@ function validateOrigin(origin: string | null, allowedOrigins: string[]): boolea
     return false; // no origins allowed = block all CORS
   }
   return allowedOrigins.includes(origin) || allowedOrigins.includes("*");
+}
+
+function isJsonContentType(contentType: string | null): boolean {
+  const mediaType = (contentType ?? "").split(";", 1)[0]?.trim().toLowerCase();
+  return mediaType === "application/json";
 }
 
 function corsHeaders(origin: string | null, config: StreamableHTTPConfig): Record<string, string> {
@@ -297,7 +303,7 @@ export function createStreamableHTTPServer(
   config?: Partial<StreamableHTTPConfig>,
 ): { server: ReturnType<typeof Bun.serve>; url: string } {
   const cfg: StreamableHTTPConfig = {
-    port: config?.port ?? 3100,
+    port: config?.port ?? CONFIG.mcp.port,
     host: config?.host ?? "127.0.0.1",
     allowedOrigins: config?.allowedOrigins ?? [],
     cors: config?.cors ?? true,
@@ -346,6 +352,19 @@ export function createStreamableHTTPServer(
         return new Response("Method not allowed", { status: 405 });
       }
 
+      if (!isJsonContentType(req.headers.get("Content-Type"))) {
+        return new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32002, message: "Unsupported Media Type: application/json required" },
+          }),
+          {
+            status: 415,
+            headers: { "Content-Type": "application/json", ...corsHeaders(origin, cfg) },
+          },
+        );
+      }
+
       // Rate limit
       const rl = rateLimiter.check("memory_search"); // generic rate limit for HTTP
       if (!rl.allowed) {
@@ -372,7 +391,7 @@ export function createStreamableHTTPServer(
       let request: JSONRPCRequest;
       try {
         const body = await req.text();
-        if (body.length > 15_360) {
+        if (body.length > CONFIG.guardrails.maxRequestBytes) {
           return new Response(
             JSON.stringify({
               jsonrpc: "2.0",

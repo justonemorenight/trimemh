@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": true,
+    "declarationMap": true,
+    "emitDeclarationOnly": true,
+    "noEmit": false,
+    "outDir": "dist/types"
+  },
+  "files": [
+    "src/sdk/index.ts",
+    "src/sdk/anthropic.ts",
+    "src/sdk/claude-agent.ts",
+    "src/sdk/vercel.ts"
+  ]
+}

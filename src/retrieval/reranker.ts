@@ -19,6 +19,7 @@
  * on real-world agent interaction traces.
  */
 
+import { CONFIG } from "../config";
 import type { MemoryItem } from "../domain/schema";
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -45,10 +46,10 @@ export interface RerankerConfig {
 }
 
 export const DEFAULT_RERANKER_CONFIG: RerankerConfig = {
-  crossEncodeWeight: 0.7,
-  stageOneLimit: 20,
-  stageTwoLimit: 5,
-  minScore: 0.05,
+  crossEncodeWeight: CONFIG.reranker.crossEncodeWeight,
+  stageOneLimit: CONFIG.reranker.stageOneLimit,
+  stageTwoLimit: CONFIG.reranker.stageTwoLimit,
+  minScore: CONFIG.reranker.minScore,
 };
 
 // ─── Token extraction ──────────────────────────────────────────────

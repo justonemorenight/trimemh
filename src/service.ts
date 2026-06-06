@@ -6,6 +6,7 @@ import type { DedupReport } from "./application/dedup-use-cases";
 import { dedupCheckAndMerge, dedupMerge, dedupScan } from "./application/dedup-use-cases";
 import { getMemoriesForCode, hybridRecall, recall } from "./application/recall-use-cases";
 import { audit, embeddingForText, guardedPayload, json, now } from "./application/service-helpers";
+import { CONFIG } from "./config";
 import { detectAdversarialOverride } from "./context/compiler";
 import type {
   AuditEvent,
@@ -42,6 +43,7 @@ import {
   guardString,
   handleSecurityViolation,
 } from "./infrastructure/guardrail";
+import { withWriteTransaction } from "./persistence/db";
 import {
   deleteMemoryItem,
   findCodeEntityByKey,
@@ -49,6 +51,7 @@ import {
   findMemoryCodeLink,
   findMemoryEdge,
   getAuditEvents,
+  getMemoriesWithEmbeddings,
   getMemoryById,
   getMemoryLinkProposalById,
   getMemoryStats,
@@ -63,13 +66,19 @@ import {
   listMemoryItems as listMemories,
   listPendingProposals,
   listProposals,
+  mergeMemoryEvidence,
   searchMemoryFts,
   updateMemoryItem,
   updateMemoryLinkProposal,
   updateProposal,
 } from "./persistence/repository";
 import { stampAgentProvenance } from "./retrieval/cross-agent";
-import { contentHash } from "./retrieval/dedup";
+import {
+  SEMANTIC_DEDUP_THRESHOLD,
+  contentHash,
+  dedupThresholdForKind,
+  findSemanticDuplicates,
+} from "./retrieval/dedup";
 import { serializeEmbedding } from "./retrieval/embedding";
 import { localEmbeddingProvider } from "./retrieval/embedding-provider";
 
@@ -95,7 +104,7 @@ function assertMemoryInProject(item: MemoryItem | null, projectId: string, id: s
 }
 
 function normalizeDepth(depth = 1): number {
-  return Math.max(1, Math.min(depth, 2));
+  return Math.max(1, Math.min(depth, CONFIG.service.maxGraphDepth));
 }
 
 export function codeEntityKey(input: {
@@ -117,11 +126,51 @@ export function codeEntityKey(input: {
 // ─── Remember (CLI:user direct write) ─────────────────────────────
 
 export function remember(db: Database, input: RememberInput): MemoryItem {
+  return withWriteTransaction(db, () => rememberOne(db, input));
+}
+
+export function rememberMany(db: Database, inputs: RememberInput[]): MemoryItem[] {
+  return withWriteTransaction(db, () => {
+    const semanticCandidatesByProject = new Map<
+      string,
+      Array<{ item: MemoryItem; embedding: Float32Array }>
+    >();
+    const seenHashes = new Set<string>();
+    const saved: MemoryItem[] = [];
+
+    for (const input of inputs) {
+      saved.push(
+        rememberOne(db, input, {
+          semanticCandidatesByProject,
+          seenHashes,
+        }),
+      );
+    }
+
+    return saved;
+  });
+}
+
+function rememberOne(
+  db: Database,
+  input: RememberInput,
+  batchState?: {
+    semanticCandidatesByProject: Map<string, Array<{ item: MemoryItem; embedding: Float32Array }>>;
+    seenHashes: Set<string>;
+  },
+): MemoryItem {
   const text = guardString(input.text, "memory.text");
   const embedding = embeddingForText(text, input.embedding);
   const hash = contentHash(text);
   const kind = input.kind;
   const risk: RiskLevel = KIND_RISK_MAP[kind];
+  const hashKey = `${input.projectId}:${hash}`;
+
+  if (batchState?.seenHashes.has(hashKey)) {
+    throw new Error(
+      `Duplicate: batch contains the same exact text more than once in project ${input.projectId}.`,
+    );
+  }
 
   // Check for exact duplicate in same project
   const existing = findMemoryByHash(db, input.projectId, hash);
@@ -134,13 +183,16 @@ export function remember(db: Database, input: RememberInput): MemoryItem {
   // Check for semantic near-duplicate (SDD-06)
   // Only runs when embedding is available; silently skipped otherwise.
   if (embedding) {
-    const merged = dedupCheckAndMerge(db, input.projectId, embedding, {
+    const dedupData = {
       text,
       kind,
       source: input.source ?? "cli:user",
       confidence: input.confidence ?? 0.5,
       evidenceJson: json(guardedPayload(input.evidence) ?? []),
-    });
+    };
+    const merged = batchState
+      ? dedupCheckAndMergeBatch(db, input.projectId, embedding, batchState, dedupData)
+      : dedupCheckAndMerge(db, input.projectId, embedding, dedupData);
     if (merged) {
       return merged;
     }
@@ -175,6 +227,15 @@ export function remember(db: Database, input: RememberInput): MemoryItem {
   };
 
   const saved = insertMemoryItem(db, item);
+  batchState?.seenHashes.add(hashKey);
+  if (batchState && embedding) {
+    const candidates = candidatesForProject(
+      db,
+      batchState.semanticCandidatesByProject,
+      input.projectId,
+    );
+    candidates.push({ item: saved, embedding });
+  }
   audit(db, input.projectId, "user", "memory_created", "memory_item", item.id, {
     kind: item.kind,
     risk_level: risk,
@@ -183,6 +244,70 @@ export function remember(db: Database, input: RememberInput): MemoryItem {
   });
 
   return saved;
+}
+
+function candidatesForProject(
+  db: Database,
+  candidatesByProject: Map<string, Array<{ item: MemoryItem; embedding: Float32Array }>>,
+  projectId: string,
+): Array<{ item: MemoryItem; embedding: Float32Array }> {
+  let candidates = candidatesByProject.get(projectId);
+  if (!candidates) {
+    candidates = getMemoriesWithEmbeddings(db, projectId);
+    candidatesByProject.set(projectId, candidates);
+  }
+  return candidates;
+}
+
+function dedupCheckAndMergeBatch(
+  db: Database,
+  projectId: string,
+  embedding: Float32Array,
+  batchState: {
+    semanticCandidatesByProject: Map<string, Array<{ item: MemoryItem; embedding: Float32Array }>>;
+  },
+  newData: {
+    text: string;
+    kind: string;
+    source: string;
+    confidence: number;
+    evidenceJson: string;
+  },
+): MemoryItem | null {
+  const candidates = candidatesForProject(db, batchState.semanticCandidatesByProject, projectId);
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const dups = findSemanticDuplicates(embedding, candidates, 0.85);
+  const best = dups.find((d) => d.similarity >= dedupThresholdForKind(d.existing.kind));
+  if (!best) {
+    return null;
+  }
+
+  const kindThreshold = dedupThresholdForKind(best.existing.kind);
+  const merged = mergeMemoryEvidence(
+    db,
+    best.existing.id,
+    newData.evidenceJson,
+    newData.confidence,
+    newData.source,
+  );
+  audit(db, projectId, newData.source, "memory_merged", "memory_item", best.existing.id, {
+    similarity: best.similarity,
+    threshold_used: kindThreshold,
+    default_threshold: SEMANTIC_DEDUP_THRESHOLD,
+    merged_text_preview: newData.text.slice(0, 100),
+    merged_kind: newData.kind,
+    existing_kind: best.existing.kind,
+  });
+
+  const candidate = candidates.find((c) => c.item.id === merged.id);
+  if (candidate) {
+    candidate.item = merged;
+  }
+
+  return merged;
 }
 
 // ─── List memories ────────────────────────────────────────────────
@@ -194,7 +319,7 @@ export function listAll(
   // biome-ignore lint/nursery/noShadow: warning suppression
   status?: string,
 ): MemoryItem[] {
-  return listMemories(db, projectId, { kind, status, limit: 100 });
+  return listMemories(db, projectId, { kind, status, limit: CONFIG.service.defaultListLimit });
 }
 
 // ─── Forget (delete) ──────────────────────────────────────────────
@@ -461,7 +586,7 @@ export function proposals(
   // biome-ignore lint/nursery/noShadow: warning suppression
   status?: ProposalStatus,
 ): MemoryProposal[] {
-  return listProposals(db, projectId, { status, limit: 100 });
+  return listProposals(db, projectId, { status, limit: CONFIG.service.defaultListLimit });
 }
 
 // ─── Memory Graph + Code Links ───────────────────────────────────
@@ -874,7 +999,7 @@ export function mcpSearch(
   db: Database,
   projectId: string,
   query: string,
-  limit = 10,
+  limit = CONFIG.service.defaultSearchLimit,
 ): McpSearchResult[] {
   const results = searchMemoryFts(db, projectId, query, limit);
   return results.map((r) => ({
@@ -902,14 +1027,14 @@ export function mcpHybridSearch(
   projectId: string,
   query: string,
   embedding: Float32Array | null,
-  limit = 10,
+  limit = CONFIG.service.defaultSearchLimit,
 ): McpSearchResult[] {
   const results = hybridRecall(db, projectId, query || null, embedding, limit);
   return results.map((r) => ({
     id: r.item.id,
     kind: r.item.kind as MemoryKind,
     text: r.item.text,
-    snippet: r.item.text.slice(0, 200),
+    snippet: r.item.text.slice(0, CONFIG.service.snippetLength),
     confidence: r.item.confidence,
     source: r.item.source,
     created_at: r.item.created_at,

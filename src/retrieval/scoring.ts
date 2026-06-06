@@ -9,6 +9,7 @@
  * graph-proximity signals, and configurable weight profiles.
  */
 
+import { CONFIG } from "../config";
 import type { MemoryItem, MemoryKind, RiskLevel } from "../domain/schema";
 import { KIND_RISK_MAP } from "../domain/schema";
 
@@ -126,7 +127,7 @@ function recencyScore(createdAt: string, updatedAt: string): number {
   // Use the more recent of created/updated
   const latest = Math.max(created, updated);
   const ageHours = (now - latest) / (1000 * 60 * 60);
-  const halfLife = 168; // 7 days in hours
+  const halfLife = CONFIG.retrieval.scoringRecencyHalfLifeHours; // 7 days in hours
   return Math.exp(-ageHours / halfLife);
 }
 

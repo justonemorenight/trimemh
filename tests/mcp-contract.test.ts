@@ -97,7 +97,6 @@ describe("MCP Contract", () => {
     it("should return results with expected shape for MCP tool", () => {
       const results = mcpSearch(db, PROJECT, "Vitest");
       expect(results.length).toBeGreaterThan(0);
-      // biome-ignore lint/style/noNonNullAssertion: warning suppression
       const r = results[0]!;
       // Verify all promised MCP tool fields exist
       expect(typeof r.id).toBe("string");
@@ -198,9 +197,7 @@ describe("MCP Contract", () => {
 
   describe("memory graph MCP tools", () => {
     it("should create pending memory link proposal only", () => {
-      // biome-ignore lint/style/noNonNullAssertion: warning suppression
       const source = mcpSearch(db, PROJECT, "TypeScript")[0]!;
-      // biome-ignore lint/style/noNonNullAssertion: warning suppression
       const target = mcpSearch(db, PROJECT, "Vitest")[0]!;
 
       const result = mcpMemoryLinkPropose(db, {
@@ -260,7 +257,6 @@ describe("MCP Contract", () => {
     });
 
     it("should create pending memory code link proposal and find it only after approval", () => {
-      // biome-ignore lint/style/noNonNullAssertion: warning suppression
       const memory = mcpSearch(db, PROJECT, "indentation")[0]!;
       const result = mcpMemoryCodeLinkPropose(db, {
         projectId: PROJECT,
@@ -282,7 +278,6 @@ describe("MCP Contract", () => {
     });
 
     it("should reject invalid code link relation before creating proposal", () => {
-      // biome-ignore lint/style/noNonNullAssertion: warning suppression
       const memory = mcpSearch(db, PROJECT, "TypeScript")[0]!;
       expect(() =>
         mcpMemoryCodeLinkPropose(db, {

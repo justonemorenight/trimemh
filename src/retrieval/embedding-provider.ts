@@ -12,9 +12,11 @@
 
 import { createHash } from "node:crypto";
 
+import { CONFIG } from "../config";
+
 // ─── Constants ──────────────────────────────────────────────────────
 
-export const DEFAULT_EMBEDDING_DIMENSIONS = 384;
+export const DEFAULT_EMBEDDING_DIMENSIONS = CONFIG.embedding.defaultDimensions;
 
 /** Minimum dimension for semantic dedup reliability (shared with dedup.ts). */
 export const SEMANTIC_MIN_DIMENSION = 128;
@@ -420,7 +422,7 @@ export class CachingProvider extends BaseEmbeddingProvider {
 // ─── Provider Registry ──────────────────────────────────────────────
 
 let activeProvider: EmbeddingProvider | null = null;
-let providerConfig = "local-hash-v1";
+let providerConfig = CONFIG.embedding.defaultProviderName;
 let preferQuality = false;
 let autoUpgradeAttempted = false;
 
@@ -434,7 +436,7 @@ let autoUpgradeAttempted = false;
 export function getEmbeddingProvider(): EmbeddingProvider {
   if (!activeProvider) {
     activeProvider = new LocalHashProvider();
-    providerConfig = "local-hash-v1";
+    providerConfig = CONFIG.embedding.defaultProviderName;
 
     // Auto-detect ONNX availability for quality upgrade
     if (preferQuality && !autoUpgradeAttempted) {
@@ -479,7 +481,7 @@ async function tryAutoUpgradeToOnnx(): Promise<void> {
     const healthy = await onnxProvider.healthCheck();
     if (healthy) {
       activeProvider = onnxProvider;
-      providerConfig = "onnx-minilm-l6-v2";
+      providerConfig = CONFIG.embedding.onnxProviderName;
       console.warn(
         "[triMemh] 🧠 Upgraded embedding to ONNX MiniLM-L6-v2 (384-dim). " +
           "Semantic similarity accuracy significantly improved.",
@@ -505,7 +507,7 @@ export async function tryUpgradeToOnnx(): Promise<boolean> {
     const healthy = await onnxProvider.healthCheck();
     if (healthy) {
       activeProvider = onnxProvider;
-      providerConfig = "onnx-minilm-l6-v2";
+      providerConfig = CONFIG.embedding.onnxProviderName;
       console.warn("[triMemh] 🧠 ONNX MiniLM-L6-v2 activated (384-dim).");
       return true;
     }
@@ -521,7 +523,7 @@ export async function tryUpgradeToOnnx(): Promise<boolean> {
  */
 export function downgradeToLocalHash(): void {
   activeProvider = new LocalHashProvider();
-  providerConfig = "local-hash-v1";
+  providerConfig = CONFIG.embedding.defaultProviderName;
   autoUpgradeAttempted = false;
 }
 
@@ -536,9 +538,9 @@ export function setEmbeddingProvider(provider: EmbeddingProvider | string): void
   autoUpgradeAttempted = true; // explicit set overrides auto-upgrade
   if (typeof provider === "string") {
     providerConfig = provider;
-    if (provider === "local-hash-v1") {
+    if (provider === CONFIG.embedding.defaultProviderName) {
       activeProvider = new LocalHashProvider();
-    } else if (provider.startsWith("onnx:")) {
+    } else if (provider.startsWith(CONFIG.embedding.onnxModelPrefix)) {
       console.warn(
         "[triMemh] ONNX provider requires async initialization. " +
           // biome-ignore lint/security/noSecrets: warning message snippet false positive
@@ -562,8 +564,8 @@ export function setEmbeddingProvider(provider: EmbeddingProvider | string): void
 export async function setEmbeddingProviderAsync(
   provider: EmbeddingProvider | string,
 ): Promise<void> {
-  if (typeof provider === "string" && provider.startsWith("onnx:")) {
-    const modelPath = provider.slice("onnx:".length) || undefined;
+  if (typeof provider === "string" && provider.startsWith(CONFIG.embedding.onnxModelPrefix)) {
+    const modelPath = provider.slice(CONFIG.embedding.onnxModelPrefix.length) || undefined;
     try {
       activeProvider = await ONNXProvider.create(modelPath);
       providerConfig = provider;
@@ -571,7 +573,7 @@ export async function setEmbeddingProviderAsync(
     } catch {
       console.warn("[triMemh] ONNX initialization failed; falling back to local-hash-v1.");
       activeProvider = new LocalHashProvider();
-      providerConfig = "local-hash-v1";
+      providerConfig = CONFIG.embedding.defaultProviderName;
       return;
     }
   }

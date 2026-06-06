@@ -27,9 +27,22 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .cache
 *.tsbuildinfo
 
-# IntelliJ based IDEs
+# IDEs
 .idea
+.cursor
 
 # Finder (MacOS) folder config
 .DS_Store
-.memh/*.db
+
+# Runtime data (databases, agent state)
+.memh/
+.agents/
+.trimemh/
+
+# Benchmark & test artifact logs
+stderr.txt
+stdout.txt
+test-output.txt
+
+# Temporary / scaffolding files
+ORIGINAL_REQUEST.md

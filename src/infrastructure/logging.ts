@@ -1,3 +1,4 @@
+import { CONFIG } from "../config";
 /**
  * Structured Logging & Observability (Phase 3 — Integration & DX)
  *
@@ -118,8 +119,8 @@ export class Logger {
     const entry: LogEntry = {
       ts: new Date().toISOString(),
       level,
-      module: module.slice(0, 32), // cap module name
-      msg: msg.slice(0, 1000), // cap message
+      module: module.slice(0, CONFIG.logging.maxModuleLength), // cap module name
+      msg: msg.slice(0, CONFIG.logging.maxMessageLength), // cap message
       ctx: ctx ? this.sanitizeCtx(ctx) : undefined,
     };
 
@@ -156,8 +157,8 @@ export class Logger {
       if (value === undefined) {
         continue;
       }
-      if (typeof value === "string" && value.length > 500) {
-        sanitized[key] = `${value.slice(0, 500)}…`;
+      if (typeof value === "string" && value.length > CONFIG.logging.maxContextValueLength) {
+        sanitized[key] = `${value.slice(0, CONFIG.logging.maxContextValueLength)}…`;
       } else {
         sanitized[key] = value;
       }

@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 
+import { CONFIG } from "../config";
 import type { MemoryItem } from "../domain/schema";
 import { getAuditEvents } from "../persistence/repository";
 import { embedText } from "../retrieval/embedding-provider";
@@ -112,7 +113,7 @@ function lineageForIds(
   }
   const requested = new Set(ids);
   const byId = new Map(memories.map((item) => [item.id, item]));
-  const audit = getAuditEvents(db, projectId, 200);
+  const audit = getAuditEvents(db, projectId, CONFIG.context.auditEventLimit);
 
   return [...requested]
     .map((id) => {
@@ -160,7 +161,7 @@ export function assembleMemoryContext(input: AssembleContextInput): AssembledCon
   // Reset CCR store for new turn (CCR data is turn-isolated)
   resetCcrStore();
 
-  const modelContextTokens = input.modelContextTokens ?? 32_000;
+  const modelContextTokens = input.modelContextTokens ?? CONFIG.context.defaultModelTokens;
   const previous = input.state ?? createRuntimeContextState();
   const turn = previous.turn + 1;
   const openPaths = new Set(input.openPaths ?? []);
@@ -174,7 +175,12 @@ export function assembleMemoryContext(input: AssembleContextInput): AssembledCon
 
   const semanticDetails = query
     ? selectSemanticDetails(
-        vectorSearch(input.db, input.projectId, embedText(query), 20).map((result) => ({
+        vectorSearch(
+          input.db,
+          input.projectId,
+          embedText(query),
+          CONFIG.context.vectorSearchLimit,
+        ).map((result) => ({
           item: result.item,
           similarity: result.similarity,
         })),

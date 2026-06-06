@@ -8,6 +8,7 @@
 
 import type { Database } from "bun:sqlite";
 
+import { CONFIG } from "../config";
 import type { MemoryItem } from "../domain/schema";
 import { searchMemoryFts } from "../persistence/repository";
 import {
@@ -165,7 +166,7 @@ export function hybridRetrieve(
   queryText: string | null,
   queryEmbedding: Float32Array | null,
   limit = 10,
-  k = 60,
+  k = CONFIG.retrieval.rrfK,
 ): HybridQueryResult[] {
   if (!(queryText || queryEmbedding)) {
     return [];

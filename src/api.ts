@@ -4,6 +4,7 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { ZodError, z } from "zod";
 
+import { CONFIG } from "./config";
 import { assembleMemoryContext } from "./context/context-runtime";
 import type {
   CodeEntityType,
@@ -51,12 +52,9 @@ import {
   status,
 } from "./service";
 
-const MAX_LIST_LIMIT = 100;
-const DEFAULT_PORT = 3000;
-
 const RememberSchema = z.object({
   kind: z.enum(MEMORY_KINDS),
-  text: z.string().min(1).max(10_000),
+  text: z.string().min(1).max(CONFIG.zod.maxMemoryText),
   confidence: z.number().min(0).max(1).optional(),
   visibility: z.enum(VISIBILITY).optional(),
   evidence: z.array(EvidenceSchema).optional(),
@@ -65,37 +63,47 @@ const RememberSchema = z.object({
 });
 
 const RecallSchema = z.object({
-  query: z.string().min(1).max(2_000).optional(),
+  query: z.string().min(1).max(CONFIG.zod.maxQueryLength).optional(),
   vector: z.array(z.number()).optional(),
   mode: z.enum(["fts", "vector", "hybrid"]).default("fts"),
-  limit: z.number().int().min(1).max(MAX_LIST_LIMIT).default(10),
+  limit: z.number().int().min(1).max(CONFIG.api.maxListLimit).default(CONFIG.api.defaultListLimit),
 });
 
 const ContextAssembleSchema = z.object({
-  query: z.string().max(2_000).optional(),
-  open_paths: z.array(z.string().max(2_000)).optional(),
-  openPaths: z.array(z.string().max(2_000)).optional(),
-  include_lineage_for_ids: z.array(z.string().max(256)).optional(),
-  includeLineageForIds: z.array(z.string().max(256)).optional(),
-  model_context_tokens: z.number().int().min(1_000).max(1_000_000).optional(),
-  modelContextTokens: z.number().int().min(1_000).max(1_000_000).optional(),
+  query: z.string().max(CONFIG.zod.maxQueryLength).optional(),
+  open_paths: z.array(z.string().max(CONFIG.zod.maxPathLength)).optional(),
+  openPaths: z.array(z.string().max(CONFIG.zod.maxPathLength)).optional(),
+  include_lineage_for_ids: z.array(z.string().max(CONFIG.zod.maxLineageIds)).optional(),
+  includeLineageForIds: z.array(z.string().max(CONFIG.zod.maxLineageIds)).optional(),
+  model_context_tokens: z
+    .number()
+    .int()
+    .min(CONFIG.context.minModelTokens)
+    .max(CONFIG.context.maxModelTokens)
+    .optional(),
+  modelContextTokens: z
+    .number()
+    .int()
+    .min(CONFIG.context.minModelTokens)
+    .max(CONFIG.context.maxModelTokens)
+    .optional(),
 });
 
 const ProposalSchema = z.object({
   kind: z.enum(MEMORY_KINDS),
-  text: z.string().min(1).max(10_000),
+  text: z.string().min(1).max(CONFIG.zod.maxMemoryText),
   action: z.enum(PROPOSAL_ACTIONS).default("create"),
   target_memory_id: z.string().optional(),
   targetMemoryId: z.string().optional(),
-  proposed_by: z.string().min(1).max(200).optional(),
-  rationale: z.string().max(2_000).optional(),
+  proposed_by: z.string().min(1).max(CONFIG.zod.maxEntityLength).optional(),
+  rationale: z.string().max(CONFIG.zod.maxMemoryRationale).optional(),
   evidence: z.array(EvidenceSchema).optional(),
 });
 
 const DecisionSchema = z.object({
-  decided_by: z.string().min(1).max(200).optional(),
-  decidedBy: z.string().min(1).max(200).optional(),
-  note: z.string().max(2_000).optional(),
+  decided_by: z.string().min(1).max(CONFIG.zod.maxEntityLength).optional(),
+  decidedBy: z.string().min(1).max(CONFIG.zod.maxEntityLength).optional(),
+  note: z.string().max(CONFIG.zod.maxMemoryRationale).optional(),
 });
 
 const LinkProposalSchema = z.object({
@@ -108,18 +116,18 @@ const LinkProposalSchema = z.object({
   memoryId: z.string().optional(),
   entity_type: z.enum(CODE_ENTITY_TYPES).optional(),
   entityType: z.enum(CODE_ENTITY_TYPES).optional(),
-  path: z.string().max(2_000).optional(),
-  symbol: z.string().max(500).optional(),
+  path: z.string().max(CONFIG.zod.maxPathLength).optional(),
+  symbol: z.string().max(CONFIG.zod.maxSymbolLength).optional(),
   line_start: z.number().int().optional(),
   lineStart: z.number().int().optional(),
   line_end: z.number().int().optional(),
   lineEnd: z.number().int().optional(),
-  fingerprint: z.string().max(500).optional(),
-  relation: z.string().min(1).max(100),
+  fingerprint: z.string().max(CONFIG.zod.maxFingerprintLength).optional(),
+  relation: z.string().min(1).max(CONFIG.zod.maxRelationLength),
   confidence: z.number().min(0).max(1).optional(),
-  proposed_by: z.string().min(1).max(200).optional(),
-  proposedBy: z.string().min(1).max(200).optional(),
-  rationale: z.string().max(2_000).optional(),
+  proposed_by: z.string().min(1).max(CONFIG.zod.maxEntityLength).optional(),
+  proposedBy: z.string().min(1).max(CONFIG.zod.maxEntityLength).optional(),
+  rationale: z.string().max(CONFIG.zod.maxMemoryRationale).optional(),
   evidence: z.array(EvidenceSchema).optional(),
 });
 
@@ -204,7 +212,7 @@ function _parseLimit(value: string | undefined, fallback: number): number {
   if (!Number.isFinite(parsed)) {
     return fallback;
   }
-  return Math.max(1, Math.min(parsed, MAX_LIST_LIMIT));
+  return Math.max(1, Math.min(parsed, CONFIG.api.maxListLimit));
 }
 
 function actorFromDecision(input: z.infer<typeof DecisionSchema>, fallback: string): string {
@@ -542,7 +550,7 @@ function getDefaultApi(): Hono {
 }
 
 export default {
-  port: Number.parseInt(process.env.PORT ?? `${DEFAULT_PORT}`, 10),
+  port: Number.parseInt(process.env.PORT ?? `${CONFIG.api.defaultPort}`, 10),
   fetch(request: Request) {
     return getDefaultApi().fetch(request);
   },

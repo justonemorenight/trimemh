@@ -85,10 +85,9 @@ export function sanitizeOutput(text: string, maxWords = 200): string {
 // ─── Input validation (SDD-05 §5.1) ─────────────────────────────
 
 /** Maximum bytes for a single string field (10 KB). */
-export const MAX_STRING_BYTES = 10_240;
+import { CONFIG } from "../config";
 
-/** Maximum bytes for the raw JSON-RPC request body (15 KB). */
-export const MAX_REQUEST_BYTES = 15_360;
+export const MAX_STRING_BYTES = CONFIG.guardrails.maxStringBytes;
 
 /**
  * Validate that a string does not exceed `maxBytes` when encoded as UTF-8.
@@ -96,12 +95,13 @@ export const MAX_REQUEST_BYTES = 15_360;
  */
 export function validateStringSize(
   value: string,
-  maxBytes: number = MAX_STRING_BYTES,
+  maxBytes: number | undefined = undefined,
   fieldName = "value",
 ): string | null {
+  const effectiveMaxBytes = maxBytes ?? CONFIG.guardrails.maxStringBytes;
   const byteLength = new TextEncoder().encode(value).length;
-  if (byteLength > maxBytes) {
-    return `Field "${fieldName}" exceeds maximum size of ${maxBytes} bytes (received ${byteLength} bytes).`;
+  if (byteLength > effectiveMaxBytes) {
+    return `Field "${fieldName}" exceeds maximum size of ${effectiveMaxBytes} bytes (received ${byteLength} bytes).`;
   }
   return null;
 }

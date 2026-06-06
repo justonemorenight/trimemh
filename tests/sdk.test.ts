@@ -189,7 +189,6 @@ describe("Vercel AI SDK integration", () => {
     const options = { client: fakeContextClient(), ai };
 
     await generateTextWithMemh({ model: "m", prompt: "Hello", tools: { a: true } }, options);
-    // biome-ignore lint/style/noNonNullAssertion: warning suppression
     await streamTextWithMemh(calls[0]!, options);
 
     expect(String(calls[0]?.system)).toContain("memh_context:start");
