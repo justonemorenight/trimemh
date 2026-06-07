@@ -52,5 +52,40 @@ describe("hook-service", () => {
 
     expect(normalized.kind).toBe("fact");
     expect(normalized.requireReview).toBe(false);
+    expect(normalized.lifecycleState).toBe("proposed");
+    expect(normalized.normalizedEvent.agent_id).toBe("codex");
+  });
+
+  test("tool observations produce a normalized envelope and needs_review lifecycle", () => {
+    const normalized = normalizeHookPayload({
+      event: "pre_tool_use",
+      agent: "claude-code",
+      payload: {
+        session_id: "session-c",
+        tool_name: "Bash",
+        tool_input: { command: "bun test" },
+      },
+    });
+
+    expect(normalized.normalizedEvent.session_id).toBe("session-c");
+    expect(normalized.normalizedEvent.tool).toBe("Bash");
+    expect(normalized.normalizedEvent.risk_signals).toContain("shell_tool");
+    expect(normalized.lifecycleState).toBe("needs_review");
+  });
+
+  test("stop hooks normalize into first-class session summary text", () => {
+    const normalized = normalizeHookPayload({
+      event: "stop",
+      agent: "codex",
+      payload: {
+        session_id: "session-stop",
+        summary: "Finished adapter work.",
+        files: ["src/service/hook-service.ts"],
+      },
+    });
+
+    expect(normalized.kind).toBe("session_summary");
+    expect(normalized.text).toContain("Session summary for codex/session-stop.");
+    expect(normalized.text).toContain("source_event=stop");
   });
 });

@@ -435,6 +435,49 @@ const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_code_links_project_entity ON memory_code_links(project_id, entity_id);
     `,
   },
+  {
+    version: 6,
+    name: "lifecycle-and-session-registry",
+    sql: `
+      CREATE TABLE memory_lifecycle_events (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('observed', 'proposed', 'needs_review', 'approved', 'rejected', 'merged', 'superseded', 'expired')),
+        actor TEXT NOT NULL,
+        payload_hash TEXT,
+        payload_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX idx_lifecycle_entity
+        ON memory_lifecycle_events(project_id, entity_type, entity_id, created_at);
+      CREATE INDEX idx_lifecycle_project_state
+        ON memory_lifecycle_events(project_id, state, created_at);
+      CREATE INDEX idx_lifecycle_payload_hash
+        ON memory_lifecycle_events(project_id, payload_hash);
+
+      CREATE TABLE memory_sessions (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        agent_id TEXT NOT NULL,
+        parent_session_id TEXT,
+        summary TEXT NOT NULL DEFAULT '',
+        handoff_notes TEXT,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(project_id, session_id, agent_id)
+      );
+
+      CREATE INDEX idx_sessions_project_agent
+        ON memory_sessions(project_id, agent_id, updated_at);
+      CREATE INDEX idx_sessions_project_parent
+        ON memory_sessions(project_id, parent_session_id);
+    `,
+  },
 ];
 
 // ─── Run all pending migrations ──────────────────────────────────

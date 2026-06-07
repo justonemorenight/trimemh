@@ -4,7 +4,11 @@ import type { MemoryKind, MemoryProposal } from "../domain/schema";
 import { guardString } from "../infrastructure/guardrail";
 import { hashArguments } from "../infrastructure/sanitize";
 import { listProposals } from "../persistence/repository";
+import { audit } from "./helpers";
+import { recordLifecycleEvent } from "./lifecycle-service";
 import { mcpPropose } from "./mcp-service";
+import { type NormalizedMemoryEvent, adapterForAgent } from "./memory-event-adapter";
+import { buildSessionSummaryText, registerSessionObservation } from "./session-service";
 
 export const HOOK_CAPTURE_EVENTS = [
   "session_start",
@@ -31,6 +35,8 @@ export interface HookCaptureResult {
   kind: MemoryKind;
   text: string;
   payloadHash: string;
+  normalizedEvent: NormalizedMemoryEvent;
+  lifecycleState: ProposalLifecycleState;
   redacted: boolean;
   truncated: boolean;
   requireReview: boolean;
@@ -38,6 +44,19 @@ export interface HookCaptureResult {
   proposalId?: string;
   message: string;
 }
+
+export const PROPOSAL_LIFECYCLE_STATES = [
+  "observed",
+  "proposed",
+  "needs_review",
+  "approved",
+  "rejected",
+  "merged",
+  "superseded",
+  "expired",
+] as const;
+
+export type ProposalLifecycleState = (typeof PROPOSAL_LIFECYCLE_STATES)[number];
 
 const MAX_HOOK_WORDS = 180;
 const SECRET_RE =
@@ -114,6 +133,50 @@ function requiresReview(event: HookCaptureEvent, redacted: boolean, truncated: b
   );
 }
 
+function lifecycleStateFor(input: {
+  requireReview: boolean;
+  riskSignals: string[];
+}): ProposalLifecycleState {
+  if (input.requireReview || input.riskSignals.length > 0) {
+    return "needs_review";
+  }
+  return "proposed";
+}
+
+function hookMemoryText(input: {
+  event: HookCaptureEvent;
+  agent: string;
+  payloadHash: string;
+  lifecycleState: ProposalLifecycleState;
+  normalizedEvent: NormalizedMemoryEvent;
+  payload: string;
+}): string {
+  if (input.event === "stop" || input.event === "pre_compact") {
+    return buildSessionSummaryText({
+      projectId: "",
+      agentId: input.agent,
+      sessionId: input.normalizedEvent.session_id,
+      parentSessionId: input.normalizedEvent.parent_session_id,
+      summary: input.normalizedEvent.summary,
+      files: input.normalizedEvent.files,
+      handoffNotes: `payload_hash=${input.payloadHash}; lifecycle_state=${input.lifecycleState}; risk_signals=${input.normalizedEvent.risk_signals.join(",") || "none"}`,
+      sourceEvent: input.event,
+    });
+  }
+
+  return [
+    `Hook observation from ${input.agent}: ${input.event}.`,
+    `payload_hash=${input.payloadHash}`,
+    `lifecycle_state=${input.lifecycleState}`,
+    `session_id=${input.normalizedEvent.session_id ?? "unknown"}`,
+    `tool=${input.normalizedEvent.tool ?? "none"}`,
+    `files=${input.normalizedEvent.files.join(",") || "none"}`,
+    `risk_signals=${input.normalizedEvent.risk_signals.join(",") || "none"}`,
+    `summary=${input.normalizedEvent.summary}`,
+    `payload=${input.payload}`,
+  ].join("\n");
+}
+
 function existingHookProposal(
   db: Database,
   projectId: string,
@@ -147,14 +210,31 @@ export function normalizeHookPayload(input: {
   });
   const redacted = redactHookText(serialized);
   const truncated = truncateWords(redacted.text, MAX_HOOK_WORDS);
+  const adapter = adapterForAgent(input.agent);
+  const normalizedEvent = adapter.normalize({
+    event: input.event,
+    agent: input.agent,
+    payload: input.payload,
+    payloadHash,
+    sanitizedPayload: truncated.text,
+  });
   const kind = hookKind(input.event);
-  const requireReview = requiresReview(input.event, redacted.redacted, truncated.truncated);
+  const requireReview =
+    requiresReview(input.event, redacted.redacted, truncated.truncated) ||
+    normalizedEvent.risk_signals.length > 0;
+  const lifecycleState = lifecycleStateFor({
+    requireReview,
+    riskSignals: normalizedEvent.risk_signals,
+  });
   const text = guardString(
-    [
-      `Hook observation from ${input.agent}: ${input.event}.`,
-      `payload_hash=${payloadHash}`,
-      `payload=${truncated.text}`,
-    ].join("\n"),
+    hookMemoryText({
+      event: input.event,
+      agent: input.agent,
+      payloadHash,
+      lifecycleState,
+      normalizedEvent,
+      payload: truncated.text,
+    }),
     "hook.payload",
   );
 
@@ -164,6 +244,8 @@ export function normalizeHookPayload(input: {
     kind,
     text,
     payloadHash,
+    normalizedEvent,
+    lifecycleState,
     redacted: redacted.redacted,
     truncated: truncated.truncated,
     requireReview,
@@ -181,8 +263,68 @@ export function captureHookEvent(db: Database, input: HookCaptureInput): HookCap
     };
   }
 
+  audit(
+    db,
+    input.projectId,
+    `agent:${input.agent}`,
+    "memory_event_observed",
+    "memory_event",
+    normalized.payloadHash,
+    {
+      lifecycle_state: normalized.lifecycleState,
+      event: input.event,
+      session_id: normalized.normalizedEvent.session_id,
+      tool: normalized.normalizedEvent.tool,
+      risk_signals: normalized.normalizedEvent.risk_signals,
+    },
+  );
+  recordLifecycleEvent(db, {
+    projectId: input.projectId,
+    entityType: "memory_event",
+    entityId: normalized.payloadHash,
+    state: "observed",
+    actor: `agent:${input.agent}`,
+    payloadHash: normalized.payloadHash,
+    payload: {
+      event: input.event,
+      session_id: normalized.normalizedEvent.session_id,
+      tool: normalized.normalizedEvent.tool,
+      risk_signals: normalized.normalizedEvent.risk_signals,
+    },
+  });
+
+  if (input.event === "stop" || input.event === "pre_compact") {
+    registerSessionObservation(db, {
+      projectId: input.projectId,
+      agentId: input.agent,
+      sessionId: normalized.normalizedEvent.session_id,
+      parentSessionId: normalized.normalizedEvent.parent_session_id,
+      summary: normalized.normalizedEvent.summary,
+      files: normalized.normalizedEvent.files,
+      handoffNotes: `source_event=${input.event}; payload_hash=${normalized.payloadHash}`,
+      sourceEvent: input.event,
+      payloadHash: normalized.payloadHash,
+      metadata: {
+        cwd: normalized.normalizedEvent.cwd,
+        risk_signals: normalized.normalizedEvent.risk_signals,
+      },
+    });
+  }
+
   const existing = existingHookProposal(db, input.projectId, normalized.payloadHash);
   if (existing) {
+    audit(
+      db,
+      input.projectId,
+      `agent:${input.agent}`,
+      "memory_event_deduped",
+      "memory_proposal",
+      existing.id,
+      {
+        payload_hash: normalized.payloadHash,
+        event: input.event,
+      },
+    );
     return {
       ...normalized,
       status: "deduped",
@@ -201,7 +343,15 @@ export function captureHookEvent(db: Database, input: HookCaptureInput): HookCap
       {
         source: `hook:${input.agent}:${input.event}`,
         reference: normalized.payloadHash,
-        note: `redacted=${normalized.redacted}; truncated=${normalized.truncated}`,
+        note: [
+          `redacted=${normalized.redacted}`,
+          `truncated=${normalized.truncated}`,
+          `lifecycle_state=${normalized.lifecycleState}`,
+          `session_id=${normalized.normalizedEvent.session_id ?? ""}`,
+          `tool=${normalized.normalizedEvent.tool ?? ""}`,
+          `files=${normalized.normalizedEvent.files.join(",")}`,
+          `risk_signals=${normalized.normalizedEvent.risk_signals.join(",")}`,
+        ].join("; "),
       },
     ],
     argumentsHash: normalized.payloadHash,

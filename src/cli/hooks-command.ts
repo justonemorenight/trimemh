@@ -47,6 +47,8 @@ export function registerHooksCommand(program: Command): void {
                   kind: result.kind,
                   proposal_id: result.proposalId,
                   payload_hash: result.payloadHash,
+                  lifecycle_state: result.lifecycleState,
+                  normalized_event: result.normalizedEvent,
                   redacted: result.redacted,
                   truncated: result.truncated,
                   require_review: result.requireReview,

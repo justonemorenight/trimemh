@@ -1,6 +1,8 @@
 import type { Database } from "bun:sqlite";
+
 import { v4 as uuidv4 } from "uuid";
 
+import { CONFIG } from "../config";
 import type {
   AuditEvent,
   MemoryItem,
@@ -12,8 +14,7 @@ import type {
   RiskLevel,
 } from "../domain/schema";
 import { KIND_RISK_MAP } from "../domain/schema";
-import { guardString } from "../infrastructure/guardrail";
-import { handleSecurityViolation } from "../infrastructure/guardrail";
+import { guardString, handleSecurityViolation } from "../infrastructure/guardrail";
 import {
   deleteMemoryItem,
   findMemoryByHash,
@@ -28,11 +29,11 @@ import {
   updateMemoryItem,
   updateProposal,
 } from "../persistence/repository";
-import { CONFIG } from "../config";
 import { contentHash } from "../retrieval/dedup";
 import { serializeEmbedding } from "../retrieval/embedding";
 import { localEmbeddingProvider } from "../retrieval/embedding-provider";
 import { audit, embeddingForText, guardedPayload, json, now } from "./helpers";
+import { recordLifecycleEvent } from "./lifecycle-service";
 
 // ─── Propose (from agent/MCP/reflect) ─────────────────────────────
 
@@ -77,6 +78,20 @@ export function propose(db: Database, input: ProposeInput): MemoryProposal {
   };
 
   const saved = insertProposal(db, proposal);
+  recordLifecycleEvent(db, {
+    projectId: input.projectId,
+    entityType: "memory_proposal",
+    entityId: proposal.id,
+    state: input.requireReview || overrideAttempt ? "needs_review" : "proposed",
+    actor: input.proposedBy,
+    payloadHash: input.argumentsHash,
+    payload: {
+      action: proposal.action,
+      kind: proposal.proposed_kind,
+      risk_level: proposal.risk_level,
+      require_review: input.requireReview ?? false,
+    },
+  });
 
   if (overrideAttempt) {
     handleSecurityViolation({
@@ -157,6 +172,18 @@ export function approve(
   proposal.decided_at = now();
   proposal.decided_by = decidedBy;
   updateProposal(db, proposal);
+  recordLifecycleEvent(db, {
+    projectId,
+    entityType: "memory_proposal",
+    entityId: proposal.id,
+    state: "approved",
+    actor: decidedBy,
+    payload: {
+      kind: proposal.proposed_kind,
+      risk_level: proposal.risk_level,
+      action: proposal.action,
+    },
+  });
   audit(db, projectId, decidedBy, "proposal_approved", "memory_proposal", proposalId, {
     kind: proposal.proposed_kind,
     risk_level: proposal.risk_level,
@@ -193,6 +220,14 @@ export function approve(
     };
 
     const saved = insertMemoryItem(db, item);
+    recordLifecycleEvent(db, {
+      projectId,
+      entityType: "memory_item",
+      entityId: item.id,
+      state: "merged",
+      actor: decidedBy,
+      payload: { from_proposal: proposalId },
+    });
     audit(db, projectId, decidedBy, "memory_created", "memory_item", item.id, {
       from_proposal: proposalId,
     });
@@ -218,6 +253,14 @@ export function approve(
 
     // FTS5 sync handled by trigger
     const updated = updateMemoryItem(db, existing);
+    recordLifecycleEvent(db, {
+      projectId,
+      entityType: "memory_item",
+      entityId: updated.id,
+      state: "merged",
+      actor: decidedBy,
+      payload: { from_proposal: proposalId, action: "update" },
+    });
     audit(db, projectId, decidedBy, "memory_updated", "memory_item", updated.id, {
       from_proposal: proposalId,
     });
@@ -227,6 +270,14 @@ export function approve(
   if (proposal.action === "delete" && proposal.target_memory_id) {
     const deleted = deleteMemoryItem(db, proposal.target_memory_id);
     if (deleted) {
+      recordLifecycleEvent(db, {
+        projectId,
+        entityType: "memory_item",
+        entityId: proposal.target_memory_id,
+        state: "expired",
+        actor: decidedBy,
+        payload: { from_proposal: proposalId, action: "delete" },
+      });
       audit(db, projectId, decidedBy, "memory_deleted", "memory_item", proposal.target_memory_id, {
         from_proposal: proposalId,
       });
@@ -273,6 +324,14 @@ export function reject(
   proposal.decided_by = decidedBy;
   proposal.decision_note = note;
   updateProposal(db, proposal);
+  recordLifecycleEvent(db, {
+    projectId,
+    entityType: "memory_proposal",
+    entityId: proposal.id,
+    state: "rejected",
+    actor: decidedBy,
+    payload: { note, kind: proposal.proposed_kind },
+  });
 
   audit(db, projectId, decidedBy, "proposal_rejected", "memory_proposal", proposalId, {
     note,

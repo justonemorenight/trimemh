@@ -75,6 +75,15 @@ describe("Database", () => {
     }
   });
 
+  it("should create lifecycle and session registry tables", () => {
+    for (const table of ["memory_lifecycle_events", "memory_sessions"]) {
+      const row = db
+        .query("SELECT name FROM sqlite_master WHERE type='table' AND name = ?;")
+        .get(table) as { name: string } | undefined;
+      expect(row).toBeDefined();
+    }
+  });
+
   it("should create FTS5 virtual table", () => {
     const row = db
       .query("SELECT name FROM sqlite_master WHERE type='table' AND name='memory_items_fts';")
@@ -122,8 +131,8 @@ describe("Database", () => {
     const rows = db.query("SELECT COUNT(*) as cnt FROM schema_migrations;").get() as {
       cnt: number;
     };
-    // Should still have just the five known migrations
-    expect(rows.cnt).toBe(5);
+    // Should still have just the known migrations
+    expect(rows.cnt).toBe(6);
   });
 
   it("should have WAL mode enabled", () => {

@@ -5,6 +5,7 @@ import { Command } from "commander";
 import { formatInitResult, initProject } from "./application/init-use-cases";
 import { registerContextCommand } from "./cli/context-command";
 import { registerDedupCommand } from "./cli/dedup-command";
+import { registerEvalCommand } from "./cli/eval-command";
 import { registerGraphCommands } from "./cli/graph-commands";
 import { registerHooksCommand } from "./cli/hooks-command";
 import {
@@ -16,9 +17,12 @@ import {
   printPostInstall,
 } from "./cli/install-command";
 import { registerLearnCommand } from "./cli/learn-command";
+import { registerLifecycleCommand } from "./cli/lifecycle-command";
 import { registerMcpCommands } from "./cli/mcp-commands";
 import { registerMemoryCommands } from "./cli/memory-commands";
 import { registerProposalCommands } from "./cli/proposal-commands";
+import { registerReviewCommand } from "./cli/review-command";
+import { registerSessionCommand } from "./cli/session-command";
 import { withDb } from "./cli/with-db";
 import { loadConfig } from "./infrastructure/config";
 import { indexProject, seedProjectMemories } from "./service";
@@ -37,6 +41,10 @@ registerDedupCommand(program);
 registerGraphCommands(program);
 registerContextCommand(program);
 registerHooksCommand(program);
+registerEvalCommand(program);
+registerSessionCommand(program);
+registerReviewCommand(program);
+registerLifecycleCommand(program);
 
 // ─── init ──────────────────────────────────────────────────────────
 

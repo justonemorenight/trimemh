@@ -207,6 +207,18 @@ trimemh mcp config                # Generate MCP client config JSON
 # ── Hook Ingestion ─────────────────────────
 trimemh hooks capture --event stop --agent codex < hook.json
 
+# ── Memory v2 Workflows ────────────────────
+trimemh eval retrieval --dataset example/retrieval-eval.dataset.json --format markdown
+trimemh session summarize --agent codex --session-id abc --summary "Finished adapter work"
+trimemh session history --agent claude-code
+trimemh session registry --agent codex
+trimemh lifecycle list --entity-type memory_proposal --entity-id <proposal-id>
+trimemh lifecycle conflicts --kind decision --text "Use Codex hooks only for summaries"
+trimemh lifecycle expire --before 2026-06-07T00:00:00.000Z --dry-run
+trimemh lifecycle supersede <old-memory-id> <new-memory-id>
+trimemh review plan --input plan.md --dry-run
+trimemh review patch --with-claude
+
 # ── Memory Management ─────────────────────
 trimemh remember "text" --kind <kind>  # Store a new memory
 trimemh search "query" --mode hybrid   # Search memories (fts|vector|hybrid)

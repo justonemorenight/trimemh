@@ -23,6 +23,21 @@ export {
   getRelatedMemoryRows,
   insertMemoryEdge,
 } from "./graph-repo";
+export type {
+  LifecycleEntityType,
+  LifecycleState,
+  MemoryLifecycleEvent,
+  MemorySessionRecord,
+} from "./lifecycle-repo";
+// Lifecycle + session registry
+export {
+  getMemorySession,
+  insertLifecycleEvent,
+  latestLifecycleState,
+  listLifecycleEvents,
+  listMemorySessions,
+  upsertMemorySession,
+} from "./lifecycle-repo";
 // Memory items
 export {
   deleteMemoryItem,

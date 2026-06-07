@@ -1,0 +1,20 @@
+[
+  {
+    "id": "adapter-hooks",
+    "query": "How should IDE hook payloads be normalized before memory proposals?",
+    "expected_kinds": ["decision", "procedure"],
+    "expected_text": ["adapter", "normalized event", "proposal"]
+  },
+  {
+    "id": "session-handoff",
+    "query": "Find handoff notes for the latest Codex session",
+    "expected_kinds": ["session_summary"],
+    "expected_text": ["handoff", "session"]
+  },
+  {
+    "id": "governance-review",
+    "query": "When can hook-captured memory be auto-approved?",
+    "expected_kinds": ["security_rule", "decision"],
+    "expected_text": ["low-risk", "review", "sensitive"]
+  }
+]
