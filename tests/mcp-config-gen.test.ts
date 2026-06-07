@@ -13,6 +13,14 @@ const TEST_CONFIG: TriMemhConfig = {
   dbPath: "/home/user/project/.trimemh/memory.db",
 };
 
+type MCPServerConfig = Record<string, unknown> & {
+  cwd?: unknown;
+  env?: {
+    TRIMEMH_DB_PATH?: unknown;
+    TRIMEMH_PROJECT_ID?: unknown;
+  };
+};
+
 describe("generateMCPConfig", () => {
   test("generates claude-code config", () => {
     const result = generateMCPConfig(TEST_CONFIG, "claude-code");
@@ -20,7 +28,8 @@ describe("generateMCPConfig", () => {
     // biome-ignore lint/suspicious/noExplicitAny: warning suppression
     const config = result.config as any;
     expect(config.mcpServers.trimemh.type).toBe("stdio");
-    expect(config.mcpServers.trimemh.env.TRIMEMH_PROJECT_ID).toBe(TEST_CONFIG.projectId);
+    expect(config.mcpServers.trimemh.cwd).toBeUndefined();
+    expect(config.mcpServers.trimemh.env).toBeUndefined();
     expect(result.installInstructions).toContain("claude");
   });
 
@@ -29,7 +38,8 @@ describe("generateMCPConfig", () => {
     expect(result.target).toBe("cursor");
     // biome-ignore lint/suspicious/noExplicitAny: warning suppression
     const config = result.config as any;
-    expect(config.mcpServers.trimemh.env.TRIMEMH_DB_PATH).toBe(TEST_CONFIG.dbPath);
+    expect(config.mcpServers.trimemh.cwd).toBeUndefined();
+    expect(config.mcpServers.trimemh.env).toBeUndefined();
   });
 
   test("generates continue config", () => {
@@ -46,16 +56,49 @@ describe("generateMCPConfig", () => {
     expect(result.target).toBe("windsurf");
   });
 
+  test("generates copilot-cli config", () => {
+    const result = generateMCPConfig(TEST_CONFIG, "copilot-cli");
+    expect(result.target).toBe("copilot-cli");
+    // biome-ignore lint/suspicious/noExplicitAny: warning suppression
+    const config = result.config as any;
+    expect(config.mcpServers.trimemh.type).toBe("stdio");
+  });
+
+  test("generates aider config", () => {
+    const result = generateMCPConfig(TEST_CONFIG, "aider");
+    expect(result.target).toBe("aider");
+    // biome-ignore lint/suspicious/noExplicitAny: warning suppression
+    const config = result.config as any;
+    expect(config.mcpServers.trimemh.command).toBeTruthy();
+  });
+
   test("generates generic config", () => {
     const result = generateMCPConfig(TEST_CONFIG, "generic");
     expect(result.target).toBe("generic");
   });
 
-  test("all configs include project ID in env", () => {
+  test("all configs omit cwd by default", () => {
     const configs = generateAllMCPConfigs(TEST_CONFIG);
     for (const gen of configs) {
-      const env = extractEnv(gen.config);
-      expect(env.TRIMEMH_PROJECT_ID).toBe(TEST_CONFIG.projectId);
+      const server = extractServer(gen.config);
+      expect(server.cwd).toBeUndefined();
+    }
+  });
+
+  test("can include explicit cwd when requested", () => {
+    const configs = generateAllMCPConfigs(TEST_CONFIG, { includeCwd: true });
+    for (const gen of configs) {
+      const server = extractServer(gen.config);
+      expect(server.cwd).toBe(process.cwd());
+    }
+  });
+
+  test("can include explicit env pins when requested", () => {
+    const configs = generateAllMCPConfigs(TEST_CONFIG, { includeEnv: true });
+    for (const gen of configs) {
+      const server = extractServer(gen.config);
+      expect(server.env.TRIMEMH_PROJECT_ID).toBe(TEST_CONFIG.projectId);
+      expect(server.env.TRIMEMH_DB_PATH).toBe(TEST_CONFIG.dbPath);
     }
   });
 
@@ -76,22 +119,32 @@ describe("formatConfigAsJSON", () => {
 describe("listTargets", () => {
   test("includes all known targets", () => {
     const targets = listTargets();
-    expect(targets.length).toBe(5);
+    expect(targets.length).toBe(8);
     const names = targets.map((t) => t.target);
     expect(names).toContain("claude-code");
+    expect(names).toContain("codex");
     expect(names).toContain("cursor");
     expect(names).toContain("continue");
     expect(names).toContain("windsurf");
+    expect(names).toContain("copilot-cli");
+    expect(names).toContain("aider");
     expect(names).toContain("generic");
   });
 });
 
-// Helper: extract env from different config shapes
-function extractEnv(config: Record<string, unknown>): Record<string, string> {
-  const servers = config.mcpServers ?? config.servers;
+// Helper: extract server from different config shapes
+function extractServer(config: Record<string, unknown>): MCPServerConfig {
+  const servers = config.mcpServers ?? config.servers ?? config.mcp_servers;
   if (Array.isArray(servers)) {
-    return servers[0]?.env ?? {};
+    return asServerConfig(servers[0]);
   }
-  // biome-ignore lint/suspicious/noExplicitAny: warning suppression
-  return (servers as any)?.trimemh?.env ?? {};
+  return asServerConfig(isRecord(servers) ? servers.trimemh : undefined);
+}
+
+function asServerConfig(value: unknown): MCPServerConfig {
+  return isRecord(value) ? (value as MCPServerConfig) : {};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }

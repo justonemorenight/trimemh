@@ -40,11 +40,15 @@ Restart your agent and ask: *"search memories about authentication"*
 ### Choose your agent
 
 ```bash
-trimemh install --target claude      # Claude Code
-trimemh install --target cursor      # Cursor IDE
-trimemh install --target codex       # OpenAI Codex CLI
-trimemh install --target copilot     # GitHub Copilot CLI
-trimemh install --target aider       # Aider AI
+trimemh install --target claude-code     # Claude Code
+trimemh install --target codex           # OpenAI Codex
+trimemh install --target cursor          # Cursor IDE
+trimemh install --target continue        # Continue.dev
+trimemh install --target windsurf        # Windsurf IDE
+trimemh install --target copilot-cli     # GitHub Copilot CLI
+trimemh install --target aider           # Aider AI
+trimemh install --target claude-code --with-hooks
+trimemh install --target codex --with-hooks
 trimemh install --all                # All detected agents
 ```
 
@@ -192,12 +196,16 @@ The ContentRouter detects six common memory payload shapes and applies the match
 # ── Installation ──────────────────────────
 trimemh install                   # Auto-detect agents & install MCP config
 trimemh install --target <name>   # Install for specific agent
+trimemh install --with-hooks      # Add lifecycle hooks for Claude Code/Codex
 trimemh install --all             # Install for all detected agents
 trimemh install --dry-run         # Preview without writing files
 
 # ── MCP Server ────────────────────────────
 trimemh mcp serve                 # Start stdio MCP server
 trimemh mcp config                # Generate MCP client config JSON
+
+# ── Hook Ingestion ─────────────────────────
+trimemh hooks capture --event stop --agent codex < hook.json
 
 # ── Memory Management ─────────────────────
 trimemh remember "text" --kind <kind>  # Store a new memory

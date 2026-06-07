@@ -2,6 +2,11 @@
 
 import { Command } from "commander";
 
+import { formatInitResult, initProject } from "./application/init-use-cases";
+import { registerContextCommand } from "./cli/context-command";
+import { registerDedupCommand } from "./cli/dedup-command";
+import { registerGraphCommands } from "./cli/graph-commands";
+import { registerHooksCommand } from "./cli/hooks-command";
 import {
   detectAgents,
   formatInstallPreview,
@@ -11,14 +16,10 @@ import {
   printPostInstall,
 } from "./cli/install-command";
 import { registerLearnCommand } from "./cli/learn-command";
-import { registerContextCommand } from "./cli/context-command";
-import { registerDedupCommand } from "./cli/dedup-command";
-import { registerGraphCommands } from "./cli/graph-commands";
 import { registerMcpCommands } from "./cli/mcp-commands";
 import { registerMemoryCommands } from "./cli/memory-commands";
 import { registerProposalCommands } from "./cli/proposal-commands";
 import { withDb } from "./cli/with-db";
-import { formatInitResult, initProject } from "./application/init-use-cases";
 import { loadConfig } from "./infrastructure/config";
 import { indexProject, seedProjectMemories } from "./service";
 
@@ -35,6 +36,7 @@ registerProposalCommands(program);
 registerDedupCommand(program);
 registerGraphCommands(program);
 registerContextCommand(program);
+registerHooksCommand(program);
 
 // ─── init ──────────────────────────────────────────────────────────
 
@@ -74,9 +76,10 @@ program
   .description("Auto-detect AI agents and install MCP config")
   .option(
     "-t, --target <agent>",
-    "Install for specific agent (claude, cursor, codex, copilot, aider)",
+    "Install for specific agent (claude-code, codex, cursor, continue, windsurf, copilot-cli, aider, generic)",
   )
   .option("--all", "Install for all detected agents")
+  .option("--with-hooks", "Also install lifecycle hook capture for claude-code/codex")
   .option("--dry-run", "Show what would be installed without making changes")
   // biome-ignore lint/suspicious/useAwait: warning suppression
   .action(async (opts) => {
@@ -91,16 +94,16 @@ program
         : detected;
       if (opts.target && selected.length === 0) {
         console.error(
-          `\nUnknown agent "${opts.target}". Known: claude, cursor, codex, copilot, aider\n`,
+          `\nUnknown agent "${opts.target}". Known: claude-code, codex, cursor, continue, windsurf, copilot-cli, aider, generic\n`,
         );
         process.exit(1);
       }
       for (const d of selected) {
-        if (d.installed) {
+        if (d.installed || d.agent.id === "generic" || opts.target) {
           console.log(`  ${d.agent.icon} ${d.agent.name}:`);
           console.log(`    → ${d.configPath}`);
           console.log(
-            formatInstallPreview(memhConfig, d)
+            formatInstallPreview(memhConfig, d, { withHooks: opts.withHooks })
               .split("\n")
               .map((l) => `    ${l}`)
               .join("\n"),
@@ -116,11 +119,11 @@ program
       const found = detected.find((d) => d.agent.id === targetId);
       if (!found) {
         console.error(
-          `\nUnknown agent "${opts.target}". Known: claude, cursor, codex, copilot, aider\n`,
+          `\nUnknown agent "${opts.target}". Known: claude-code, codex, cursor, continue, windsurf, copilot-cli, aider, generic\n`,
         );
         process.exit(1);
       }
-      if (!found.installed) {
+      if (!found.installed && found.agent.id !== "generic") {
         console.error(`\n${found.agent.name} not detected on this system.\n`);
         console.error(`Config file would be at: ${found.configPath}`);
         console.error(
@@ -128,7 +131,7 @@ program
         );
         process.exit(1);
       }
-      const result = installForAgent(memhConfig, found);
+      const result = installForAgent(memhConfig, found, { withHooks: opts.withHooks });
       printInstallResults([result]);
       if (result.success) {
         printPostInstall([found.agent]);
@@ -142,7 +145,9 @@ program
         );
         return;
       }
-      const results = toInstall.map((d) => installForAgent(memhConfig, d));
+      const results = toInstall.map((d) =>
+        installForAgent(memhConfig, d, { withHooks: opts.withHooks && d.agent.supportsHooks }),
+      );
       printInstallResults(results);
       const succeeded = results.filter((r) => r.success).map((r) => r.agent);
       if (succeeded.length > 0) {
@@ -166,7 +171,7 @@ program
           return;
         }
         console.log(`\n  Auto-installing for ${agent.agent.icon} ${agent.agent.name}...\n`);
-        const result = installForAgent(memhConfig, agent);
+        const result = installForAgent(memhConfig, agent, { withHooks: opts.withHooks });
         printInstallResults([result]);
         if (result.success) {
           printPostInstall([agent.agent]);
@@ -182,7 +187,7 @@ program
         }
         console.log("  a. All of the above");
         console.log(
-          "\n  Run: trimemh install --target <name>  (e.g., trimemh install --target claude)",
+          "\n  Run: trimemh install --target <name>  (e.g., trimemh install --target claude-code)",
         );
         console.log("  Run: trimemh install --all              (install for all detected)\n");
       }
