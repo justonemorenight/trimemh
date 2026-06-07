@@ -46,7 +46,8 @@ registerSessionCommand(program);
 registerReviewCommand(program);
 registerLifecycleCommand(program);
 
-// ─── init ──────────────────────────────────────────────────────────
+import { listRulesTargets, writeAgentRulesForTargets } from "./mcp/rules-gen";
+import type { ConfigTarget } from "./mcp/config-gen";
 
 program
   .command("init")
@@ -58,6 +59,11 @@ program
   .option("--no-scan", "Skip code scanning")
   .option("--no-seed", "Skip baseline memory seeding")
   .option("--no-gitignore", "Do not add .trimemh/ to .gitignore")
+  .option("--no-rules", "Skip agent rules injection")
+  .option(
+    "--rules <targets>",
+    "Inject agent rules for specific targets (comma-separated: claude-code,cursor,windsurf,codex,copilot-cli,aider,generic)",
+  )
   .action((opts) => {
     const mode = opts.mode as "auto" | "empty" | "existing";
     if (!["auto", "empty", "existing"].includes(mode)) {
@@ -75,6 +81,39 @@ program
       updateGitignore: opts.gitignore,
     });
     console.log(formatInitResult(result));
+
+    // ── Agent Rules injection ─────────────────────────────────────
+    if (opts.noRules || opts.rules === false) {
+      return;
+    }
+
+    if (opts.rules && typeof opts.rules === "string") {
+      const targets = opts.rules.split(",").map((t: string) => t.trim()) as ConfigTarget[];
+      const dryRun = opts.dryRun ?? false;
+      const rulesResults = writeAgentRulesForTargets(targets, { dryRun });
+      console.log("\n[triMemh] Agent rules:");
+      for (const r of rulesResults) {
+        const action = r.created ? "Created" : r.updated ? "Updated" : "Appended to";
+        console.log(`  ${dryRun ? "plan" : "ok"} ${action} ${r.filePath}`);
+      }
+    } else {
+      // No --rules flag: show available targets
+      const targets = listRulesTargets();
+      console.log("\n  agent rules:");
+      console.log(
+        "    To inject memory protocol rules for your AI agent, run:",
+      );
+      console.log(
+        "    trimemh init --rules <targets>   (e.g., trimemh init --rules claude-code,cursor)",
+      );
+      console.log("    Available targets:");
+      for (const t of targets) {
+        console.log(`      ${t.target.padEnd(14)} → ${t.description}`);
+      }
+      console.log(
+        "    Or use: trimemh install --target <agent>  (installs MCP config + rules together)",
+      );
+    }
   });
 
 // ─── install ───────────────────────────────────────────────────────
@@ -88,6 +127,7 @@ program
   )
   .option("--all", "Install for all detected agents")
   .option("--with-hooks", "Also install lifecycle hook capture for claude-code/codex")
+  .option("--no-rules", "Skip injecting agent rules (CLAUDE.md, .cursor/rules, etc.)")
   .option("--dry-run", "Show what would be installed without making changes")
   // biome-ignore lint/suspicious/useAwait: warning suppression
   .action(async (opts) => {
@@ -139,7 +179,7 @@ program
         );
         process.exit(1);
       }
-      const result = installForAgent(memhConfig, found, { withHooks: opts.withHooks });
+      const result = installForAgent(memhConfig, found, { withHooks: opts.withHooks, noRules: opts.noRules });
       printInstallResults([result]);
       if (result.success) {
         printPostInstall([found.agent]);
@@ -154,7 +194,7 @@ program
         return;
       }
       const results = toInstall.map((d) =>
-        installForAgent(memhConfig, d, { withHooks: opts.withHooks && d.agent.supportsHooks }),
+        installForAgent(memhConfig, d, { withHooks: opts.withHooks && d.agent.supportsHooks, noRules: opts.noRules }),
       );
       printInstallResults(results);
       const succeeded = results.filter((r) => r.success).map((r) => r.agent);
@@ -179,7 +219,7 @@ program
           return;
         }
         console.log(`\n  Auto-installing for ${agent.agent.icon} ${agent.agent.name}...\n`);
-        const result = installForAgent(memhConfig, agent, { withHooks: opts.withHooks });
+        const result = installForAgent(memhConfig, agent, { withHooks: opts.withHooks, noRules: opts.noRules });
         printInstallResults([result]);
         if (result.success) {
           printPostInstall([agent.agent]);

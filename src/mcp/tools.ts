@@ -154,7 +154,7 @@ export function registerMemoryTools(
     "memory_context",
     {
       description:
-        "Assemble progressive memory context XML for the current turn. Includes Layer 1 index, semantic/code-path/operational Layer 2 details, optional one-turn Layer 3 lineage, LRU/budget metadata.",
+        "IMPORTANT: Call this tool at the START of every new task or conversation turn to load project memory context. Assembles progressive memory context XML for the current turn. Includes Layer 1 index, semantic/code-path/operational Layer 2 details, optional one-turn Layer 3 lineage, LRU/budget metadata. Provide the task description as 'query' and currently open file paths as 'open_paths' for best results.",
       inputSchema: ContextInputSchema,
     },
     // biome-ignore lint/suspicious/useAwait: warning suppression
@@ -561,7 +561,7 @@ export function registerMemoryTools(
     "memory_propose",
     {
       description:
-        "Propose a new memory. Creates a PENDING proposal for agent review — the memory is NOT active until approved. In your next turn, use memory_list_proposals to see pending proposals, then memory_approve or memory_reject to decide. High-risk and critical-risk proposals should be reviewed carefully. Set require_review=true to force review for any risk level.",
+        "Propose a new memory to persist project knowledge. Creates a PENDING proposal for agent review — the memory is NOT active until approved. IMPORTANT: After proposing, use memory_list_proposals in your next turn to see pending proposals, then memory_approve or memory_reject to decide. High-risk and critical-risk proposals should be reviewed carefully. Set require_review=true to force review for any risk level. Use this when you discover important facts, decisions, constraints, or patterns about the project.",
       inputSchema: ProposeInputSchema,
     },
     // biome-ignore lint/suspicious/useAwait: warning suppression

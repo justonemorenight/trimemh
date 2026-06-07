@@ -23,6 +23,7 @@ import { join, resolve } from "node:path";
 import type { TriMemhConfig } from "../domain/schema";
 import type { ConfigTarget } from "../mcp/config-gen";
 import { generateMCPConfig } from "../mcp/config-gen";
+import { writeAgentRules } from "../mcp/rules-gen";
 
 // ═══════════════════════════════════════════════════════════════════════
 // Agent definitions — detection + config paths
@@ -229,10 +230,12 @@ export interface InstallResult {
   message: string;
   created: boolean; // true = new file, false = merged into existing
   backupPath?: string; // if existing config was backed up
+  rulesPath?: string; // path to the injected agent rules file
 }
 
 export interface InstallOptions {
   withHooks?: boolean;
+  noRules?: boolean;
 }
 
 function projectRoot(): string {
@@ -272,7 +275,7 @@ export function removeCodexTrimemhTables(content: string): string {
     const trimmed = line.trim();
     const tableMatch = trimmed.match(TOML_TABLE_RE);
     if (tableMatch) {
-      const tableName = tableMatch[1];
+      const tableName = tableMatch[1] ?? "";
       skipping =
         tableName === "mcp_servers.trimemh" || tableName.startsWith("mcp_servers.trimemh.");
     }
@@ -292,7 +295,7 @@ function codexServerFromConfig(config: Record<string, unknown>): {
 } {
   const mcpServers = config.mcp_servers as Record<string, unknown> | undefined;
   const server = mcpServers?.trimemh as
-    | { command?: unknown; args?: unknown; env?: unknown }
+    | { command?: unknown; args?: unknown; cwd?: unknown; env?: unknown }
     | undefined;
   if (!server || typeof server.command !== "string" || !Array.isArray(server.args)) {
     throw new Error("Generated Codex MCP config is missing mcp_servers.trimemh.");
@@ -720,6 +723,31 @@ export function installForAgent(
           success: true,
           message: `Created new config at ${configPath}`,
           created: true,
+        };
+      }
+    }
+
+    // ── Agent Rules injection ──────────────────────────────────
+    if (!options.noRules) {
+      try {
+        const rulesResult = writeAgentRules(agent.target, {
+          projectRoot: projectRoot(),
+        });
+        const rulesAction = rulesResult.created
+          ? "Created"
+          : rulesResult.updated
+            ? "Updated"
+            : "Appended to";
+        mcpResult = {
+          ...mcpResult,
+          message: `${mcpResult.message}\n${rulesAction} agent rules at ${rulesResult.filePath}`,
+          rulesPath: rulesResult.filePath,
+        };
+      } catch {
+        // Non-fatal: MCP config is more important than rules
+        mcpResult = {
+          ...mcpResult,
+          message: `${mcpResult.message}\n⚠ Agent rules injection failed (non-fatal).`,
         };
       }
     }
