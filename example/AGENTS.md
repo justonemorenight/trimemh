@@ -7,7 +7,25 @@ Your MCP tools (`memory_*`) are pre-configured — just use them.
 
 1. `memory_context` — call FIRST with task description + open file paths
 2. `memory_search mode:"hybrid"` — find relevant past decisions/context
-3. If context shows `[compressed — retrieve with memory_retrieve("id")]`, fetch full text before relying on it
+3. `memory_list_proposals` — review pending governance items
+4. If context shows `[compressed — retrieve with memory_retrieve("id")]`, fetch full text before relying on it
+
+## End of task
+
+- `memory_session_close` — compact summary + files + decisions + tooling in one call
+- `memory_feedback` — rate memories that helped or misled
+
+## Memory kinds
+
+- `tooling` — Biome/Tailwind/ky/setup config (not session narrative)
+- `decision` — product/engineering choices with rationale
+- `session_summary` — turn/session narrative only
+- `require_review: true` — force pending; low/medium auto-approve by default
+
+## Storage
+
+- DB: `<project-root>/.trimemh/memory.db`
+- Config: `<project-root>/.memh.toml`
 
 ## Proposing memories
 

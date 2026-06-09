@@ -73,6 +73,7 @@ export const KIND_DEDUP_THRESHOLDS: Record<string, number> = {
   decision: 0.88, // decisions can be reaffirmed with variation
   code_context: 0.88, // code context varies by file/function
   session_summary: 0.85, // session summaries naturally overlap
+  tooling: 0.85,
   preference: 0.85, // preferences are re-stated with variation
   fact: 0.88, // facts should be reasonably precise
 };

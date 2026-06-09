@@ -69,10 +69,11 @@ describe("session-service", () => {
       sessionId: "session-overfetch",
       summary: "handoff alpha important session summary",
     });
-    if (!proposed.proposalId) {
-      throw new Error("Expected session proposal id");
+    if (proposed.status === "pending" && proposed.proposalId) {
+      approve(db, PROJECT, proposed.proposalId, "test");
+    } else {
+      expect(proposed.status).toBe("approved");
     }
-    approve(db, PROJECT, proposed.proposalId, "test");
 
     const results = sessionHistory(db, {
       projectId: PROJECT,

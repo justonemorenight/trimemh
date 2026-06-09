@@ -7,6 +7,7 @@ export const MEMORY_KINDS = [
   "fact",
   "decision",
   "session_summary",
+  "tooling",
   "code_context",
   "procedure",
   "mistake",
@@ -55,6 +56,7 @@ export const KIND_RISK_MAP: Record<MemoryKind, RiskLevel> = {
   fact: "low",
   decision: "medium",
   session_summary: "medium",
+  tooling: "low",
   code_context: "medium",
   procedure: "high",
   mistake: "high",
@@ -234,8 +236,10 @@ export interface ProposeInput {
   targetMemoryId?: string;
   /** SDD-05 §6.1.1: SHA-256 of sorted tool arguments for audit integrity */
   argumentsHash?: string;
-  /** Agent explicitly requests manual review (bypasses auto-approve). */
+  /** Agent explicitly requests manual review (overrides auto-approve). */
   requireReview?: boolean;
+  /** Agent explicitly requests auto-approve when risk allows. */
+  autoApprove?: boolean;
   /** Confidence 0-1, used for auto-approve threshold. */
   confidence?: number;
 }
@@ -401,6 +405,16 @@ export interface McpProposalResult {
   status: ProposalStatus;
   risk_level: RiskLevel;
   message: string;
+  memory_id?: string;
+  merged_into_proposal_id?: string;
+  suggested_code_links?: SuggestedCodeLink[];
+}
+
+export interface SuggestedCodeLink {
+  path: string;
+  relation: CodeLinkRelation;
+  entity_type: CodeEntityType;
+  reason: string;
 }
 
 export interface McpLinkProposalResult {

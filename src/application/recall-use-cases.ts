@@ -199,6 +199,7 @@ function applyScoring(
         graphDegree: graphDegrees.get(item.id) ?? 0,
         isCodePathMatch,
         isOperationalContext: isOperational,
+        query: opts.query,
       };
       return { input, original: r, originalRank: r.rank };
     });

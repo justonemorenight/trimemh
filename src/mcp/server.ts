@@ -3,11 +3,12 @@ import type { Database } from "bun:sqlite";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
+import type { ResolvedTriMemhConfig } from "../infrastructure/config";
 import { getRateLimiter } from "../infrastructure/rate-limit";
 import { enforceStdinPayloadLimit } from "./runtime";
 import { registerMemoryTools } from "./tools";
 
-export async function startMcpServer(db: Database, projectId: string): Promise<void> {
+export async function startMcpServer(db: Database, config: ResolvedTriMemhConfig): Promise<void> {
   const rateLimiter = getRateLimiter();
 
   // SDD-05 §10.1: enforce 15KB total request body limit on process.stdin.
@@ -27,7 +28,7 @@ export async function startMcpServer(db: Database, projectId: string): Promise<v
     },
   );
 
-  registerMemoryTools(server, db, projectId, rateLimiter);
+  registerMemoryTools(server, db, config, rateLimiter);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

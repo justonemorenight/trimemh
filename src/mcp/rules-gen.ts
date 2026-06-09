@@ -53,9 +53,18 @@ function coreRuleContent(): string {
 
 This project uses **triMemh** for persistent agent memory.
 
+**Storage paths**
+- DB: \`<project-root>/.trimemh/memory.db\`
+- Config: \`<project-root>/.memh.toml\`
+
 **MANDATORY**: At the start of EVERY new task, you MUST:
 1. Call \`memory_context\` with the task description and current open file paths.
 2. Call \`memory_search\` with \`mode: "hybrid"\` to retrieve relevant project knowledge.
+3. Call \`memory_list_proposals\` to review pending governance items.
+
+**End of task**: call \`memory_session_close\` with summary, files, decisions, and tooling changes.
+
+**Memory kinds**: use \`tooling\` for setup/config (Biome, Tailwind, test runners), \`decision\` for product choices, \`session_summary\` for turn narrative only.
 
 **Write Path (Explicit)**: When you learn something important about this project:
 1. \`memory_propose\` — propose a new memory (goes through governance review)

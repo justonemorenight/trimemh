@@ -230,7 +230,7 @@ const MIGRATIONS: Migration[] = [
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         expires_at TEXT,
-        CHECK (kind IN ('preference', 'fact', 'decision', 'session_summary', 'code_context', 'procedure', 'mistake', 'trade_rule', 'security_rule')),
+        CHECK (kind IN ('preference', 'fact', 'decision', 'session_summary', 'tooling', 'code_context', 'procedure', 'mistake', 'trade_rule', 'security_rule')),
         CHECK (status IN ('active', 'archived', 'expired')),
         CHECK (visibility IN ('private', 'team', 'public')),
         CHECK (confidence >= 0.0 AND confidence <= 1.0)
@@ -303,7 +303,7 @@ const MIGRATIONS: Migration[] = [
         decided_by TEXT,
         decision_note TEXT,
         CHECK (action IN ('create', 'update', 'delete')),
-        CHECK (proposed_kind IN ('preference', 'fact', 'decision', 'session_summary', 'code_context', 'procedure', 'mistake', 'trade_rule', 'security_rule')),
+        CHECK (proposed_kind IN ('preference', 'fact', 'decision', 'session_summary', 'tooling', 'code_context', 'procedure', 'mistake', 'trade_rule', 'security_rule')),
         CHECK (risk_level IN ('low', 'medium', 'high', 'critical')),
         CHECK (status IN ('pending', 'approved', 'rejected'))
       );
@@ -476,6 +476,222 @@ const MIGRATIONS: Migration[] = [
         ON memory_sessions(project_id, agent_id, updated_at);
       CREATE INDEX idx_sessions_project_parent
         ON memory_sessions(project_id, parent_session_id);
+    `,
+  },
+  {
+    version: 7,
+    name: "add-tooling-memory-kind",
+    sql: `
+      ALTER TABLE memory_items RENAME TO memory_items_old;
+
+      CREATE TABLE memory_items (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        text TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        visibility TEXT NOT NULL DEFAULT 'private',
+        confidence REAL NOT NULL DEFAULT 0.5,
+        source TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        evidence_json TEXT NOT NULL DEFAULT '[]',
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        embedding BLOB,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        expires_at TEXT,
+        CHECK (kind IN ('preference', 'fact', 'decision', 'session_summary', 'tooling', 'code_context', 'procedure', 'mistake', 'trade_rule', 'security_rule')),
+        CHECK (status IN ('active', 'archived', 'expired')),
+        CHECK (visibility IN ('private', 'team', 'public')),
+        CHECK (confidence >= 0.0 AND confidence <= 1.0)
+      );
+
+      INSERT INTO memory_items (
+        id, project_id, kind, text, status, visibility, confidence,
+        source, content_hash, evidence_json, metadata_json, embedding,
+        created_at, updated_at, expires_at
+      )
+      SELECT
+        id, project_id, kind, text, status, visibility, confidence,
+        source, content_hash, evidence_json, metadata_json, embedding,
+        created_at, updated_at, expires_at
+      FROM memory_items_old;
+
+      DROP TABLE memory_items_old;
+
+      CREATE INDEX IF NOT EXISTS idx_memory_project_id ON memory_items(project_id, id);
+      CREATE INDEX IF NOT EXISTS idx_memory_project_kind ON memory_items(project_id, kind);
+      CREATE INDEX IF NOT EXISTS idx_memory_project_status ON memory_items(project_id, status);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_content_hash ON memory_items(project_id, content_hash);
+
+      DROP TABLE IF EXISTS memory_items_fts;
+      CREATE VIRTUAL TABLE memory_items_fts USING fts5(
+        text,
+        kind UNINDEXED,
+        project_id UNINDEXED,
+        content='memory_items',
+        content_rowid='rowid'
+      );
+
+      CREATE TRIGGER memory_items_ai AFTER INSERT ON memory_items BEGIN
+        INSERT INTO memory_items_fts(rowid, text, kind, project_id)
+        VALUES (new.rowid, new.text, new.kind, new.project_id);
+      END;
+
+      CREATE TRIGGER memory_items_ad AFTER DELETE ON memory_items BEGIN
+        INSERT INTO memory_items_fts(memory_items_fts, rowid, text, kind, project_id)
+        VALUES('delete', old.rowid, old.text, old.kind, old.project_id);
+      END;
+
+      CREATE TRIGGER memory_items_au AFTER UPDATE ON memory_items BEGIN
+        INSERT INTO memory_items_fts(memory_items_fts, rowid, text, kind, project_id)
+        VALUES('delete', old.rowid, old.text, old.kind, old.project_id);
+        INSERT INTO memory_items_fts(rowid, text, kind, project_id)
+        VALUES (new.rowid, new.text, new.kind, new.project_id);
+      END;
+
+      INSERT INTO memory_items_fts(memory_items_fts) VALUES('rebuild');
+
+      ALTER TABLE memory_proposals RENAME TO memory_proposals_old;
+
+      CREATE TABLE memory_proposals (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        target_memory_id TEXT REFERENCES memory_items(id) ON DELETE SET NULL,
+        proposed_kind TEXT NOT NULL,
+        proposed_text TEXT NOT NULL,
+        proposed_by TEXT NOT NULL,
+        risk_level TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        rationale TEXT,
+        evidence_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        decided_at TEXT,
+        decided_by TEXT,
+        decision_note TEXT,
+        CHECK (action IN ('create', 'update', 'delete')),
+        CHECK (proposed_kind IN ('preference', 'fact', 'decision', 'session_summary', 'tooling', 'code_context', 'procedure', 'mistake', 'trade_rule', 'security_rule')),
+        CHECK (risk_level IN ('low', 'medium', 'high', 'critical')),
+        CHECK (status IN ('pending', 'approved', 'rejected'))
+      );
+
+      INSERT INTO memory_proposals (
+        id, project_id, action, target_memory_id, proposed_kind, proposed_text,
+        proposed_by, risk_level, status, rationale, evidence_json,
+        created_at, decided_at, decided_by, decision_note
+      )
+      SELECT
+        id, project_id, action, target_memory_id, proposed_kind, proposed_text,
+        proposed_by, risk_level, status, rationale, evidence_json,
+        created_at, decided_at, decided_by, decision_note
+      FROM memory_proposals_old;
+
+      DROP TABLE memory_proposals_old;
+
+      CREATE INDEX IF NOT EXISTS idx_proposals_project_status ON memory_proposals(project_id, status);
+
+      ALTER TABLE memory_edges RENAME TO memory_edges_old;
+
+      CREATE TABLE memory_edges (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        source_memory_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,
+        target_memory_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,
+        relation TEXT NOT NULL CHECK (relation IN ('supports', 'contradicts', 'depends_on', 'derived_from', 'supersedes', 'relates_to')),
+        confidence REAL NOT NULL DEFAULT 0.5,
+        source TEXT NOT NULL,
+        rationale TEXT,
+        evidence_json TEXT NOT NULL DEFAULT '[]',
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(project_id, source_memory_id, target_memory_id, relation),
+        CHECK(source_memory_id <> target_memory_id)
+      );
+
+      INSERT INTO memory_edges (
+        id, project_id, source_memory_id, target_memory_id, relation,
+        confidence, source, rationale, evidence_json, metadata_json,
+        created_at, updated_at
+      )
+      SELECT
+        id, project_id, source_memory_id, target_memory_id, relation,
+        confidence, source, rationale, evidence_json, metadata_json,
+        created_at, updated_at
+      FROM memory_edges_old;
+
+      DROP TABLE memory_edges_old;
+
+      CREATE INDEX IF NOT EXISTS idx_edges_project_source ON memory_edges(project_id, source_memory_id);
+      CREATE INDEX IF NOT EXISTS idx_edges_project_target ON memory_edges(project_id, target_memory_id);
+      CREATE INDEX IF NOT EXISTS idx_edges_relation ON memory_edges(project_id, relation);
+
+      ALTER TABLE memory_code_links RENAME TO memory_code_links_old;
+
+      CREATE TABLE memory_code_links (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        memory_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,
+        entity_id TEXT NOT NULL REFERENCES code_entities(id) ON DELETE CASCADE,
+        relation TEXT NOT NULL CHECK (relation IN ('relates_to', 'documents', 'warns_about', 'implements', 'depends_on')),
+        confidence REAL NOT NULL DEFAULT 0.5,
+        source TEXT NOT NULL,
+        rationale TEXT,
+        evidence_json TEXT NOT NULL DEFAULT '[]',
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(project_id, memory_id, entity_id, relation)
+      );
+
+      INSERT INTO memory_code_links (
+        id, project_id, memory_id, entity_id, relation, confidence,
+        source, rationale, evidence_json, metadata_json, created_at, updated_at
+      )
+      SELECT
+        id, project_id, memory_id, entity_id, relation, confidence,
+        source, rationale, evidence_json, metadata_json, created_at, updated_at
+      FROM memory_code_links_old;
+
+      DROP TABLE memory_code_links_old;
+
+      CREATE INDEX IF NOT EXISTS idx_code_links_project_memory ON memory_code_links(project_id, memory_id);
+      CREATE INDEX IF NOT EXISTS idx_code_links_project_entity ON memory_code_links(project_id, entity_id);
+
+      DROP TABLE IF EXISTS memory_vectors;
+      CREATE VIRTUAL TABLE memory_vectors USING vec0(
+        memory_rowid INTEGER PRIMARY KEY,
+        embedding FLOAT[${SQLITE_VEC_DIMENSIONS}] distance_metric=cosine,
+        project_id TEXT partition key,
+        status TEXT,
+        +memory_id TEXT
+      );
+
+      INSERT INTO memory_vectors(memory_rowid, embedding, project_id, status, memory_id)
+      SELECT rowid, embedding, project_id, status, id
+      FROM memory_items
+      WHERE embedding IS NOT NULL
+        AND length(embedding) = ${SQLITE_VEC_DIMENSIONS * 4};
+
+      CREATE TRIGGER memory_vectors_ai AFTER INSERT ON memory_items
+      WHEN new.embedding IS NOT NULL AND length(new.embedding) = ${SQLITE_VEC_DIMENSIONS * 4}
+      BEGIN
+        INSERT INTO memory_vectors(memory_rowid, embedding, project_id, status, memory_id)
+        VALUES (new.rowid, new.embedding, new.project_id, new.status, new.id);
+      END;
+
+      CREATE TRIGGER memory_vectors_ad AFTER DELETE ON memory_items BEGIN
+        DELETE FROM memory_vectors WHERE memory_rowid = old.rowid;
+      END;
+
+      CREATE TRIGGER memory_vectors_au AFTER UPDATE ON memory_items BEGIN
+        DELETE FROM memory_vectors WHERE memory_rowid = old.rowid;
+        INSERT INTO memory_vectors(memory_rowid, embedding, project_id, status, memory_id)
+        SELECT new.rowid, new.embedding, new.project_id, new.status, new.id
+        WHERE new.embedding IS NOT NULL
+          AND length(new.embedding) = ${SQLITE_VEC_DIMENSIONS * 4};
+      END;
     `,
   },
 ];

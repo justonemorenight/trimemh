@@ -48,11 +48,12 @@ export function shouldAutoApproveMemory(input: {
   source?: string;
   confidence?: number;
   requireReview?: boolean;
+  autoApprove?: boolean;
 }): AutoApproveDecision {
-  const { kind, source, confidence, requireReview } = input;
+  const { kind, source, confidence, requireReview, autoApprove } = input;
   const risk: RiskLevel = KIND_RISK_MAP[kind];
 
-  // Agent explicitly requested review
+  // Agent explicitly requested review — highest priority block
   if (requireReview) {
     return {
       autoApprove: false,
@@ -61,8 +62,28 @@ export function shouldAutoApproveMemory(input: {
     };
   }
 
-  // Master switch disabled
-  if (!CONFIG.autoApprove.enabled) {
+  // Agent explicitly requested auto-approve
+  if (autoApprove === false) {
+    return {
+      autoApprove: false,
+      reason: "Agent explicitly requested manual review (auto_approve=false).",
+      threshold: "low",
+    };
+  }
+
+  // CLI user always gets auto-approved (they already bypass via remember())
+  if (source === "cli:user:explicit") {
+    return {
+      autoApprove: true,
+      reason: "Direct user write — always auto-approved.",
+      threshold: "critical",
+    };
+  }
+
+  const forceAuto = autoApprove === true;
+
+  // Master switch disabled unless agent forced auto_approve
+  if (!(CONFIG.autoApprove.enabled || forceAuto)) {
     return {
       autoApprove: false,
       reason: "Auto-approval is disabled in configuration.",
@@ -80,12 +101,15 @@ export function shouldAutoApproveMemory(input: {
     };
   }
 
-  // CLI user always gets auto-approved (they already bypass via remember())
-  if (source === "cli:user:explicit") {
+  if (forceAuto) {
+    const configThreshold = CONFIG.autoApprove.maxRiskLevel as RiskLevel;
+    if (riskOrderIndex(risk) <= riskOrderIndex(configThreshold)) {
+      return evaluateAutoApproveThreshold(risk, `Agent requested auto_approve for "${risk}" memory.`);
+    }
     return {
-      autoApprove: true,
-      reason: "Direct user write — always auto-approved.",
-      threshold: "critical",
+      autoApprove: false,
+      reason: `auto_approve requested but risk "${risk}" exceeds threshold "${configThreshold}".`,
+      threshold: configThreshold,
     };
   }
 
@@ -106,11 +130,11 @@ export function shouldAutoApproveMemory(input: {
   const effectiveThreshold = higherRisk(govThreshold, configThreshold);
 
   if (riskOrderIndex(risk) <= riskOrderIndex(effectiveThreshold)) {
-    return {
-      autoApprove: true,
-      reason: `Risk level "${risk}" is at or below auto-approve threshold "${effectiveThreshold}".`,
-      threshold: effectiveThreshold,
-    };
+    return evaluateAutoApproveThreshold(
+      risk,
+      `Risk level "${risk}" is at or below auto-approve threshold "${effectiveThreshold}".`,
+      effectiveThreshold,
+    );
   }
 
   return {
@@ -181,6 +205,18 @@ export function shouldAutoApproveLink(input: {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
+
+function evaluateAutoApproveThreshold(
+  risk: RiskLevel,
+  reason: string,
+  threshold: RiskLevel = risk,
+): AutoApproveDecision {
+  return {
+    autoApprove: true,
+    reason,
+    threshold,
+  };
+}
 
 function riskOrderIndex(risk: RiskLevel): number {
   return RISK_ORDER.indexOf(risk);

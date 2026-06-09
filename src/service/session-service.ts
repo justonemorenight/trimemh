@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite";
 import { v4 as uuidv4 } from "uuid";
 
 import { recall } from "../application/recall-use-cases";
+import type { MemoryKind, McpProposalResult } from "../domain/schema";
 import type { MemoryItem } from "../domain/schema";
 import type { MemorySessionRecord } from "../persistence/repository";
 import {
@@ -10,8 +11,10 @@ import {
   listMemorySessions,
   upsertMemorySession,
 } from "../persistence/repository";
-import { recordLifecycleEvent } from "./lifecycle-service";
+import { formatProposalResultExtras } from "./mcp-service";
 import { mcpPropose } from "./mcp-service";
+import { looksLikeToolingMemory } from "./path-extract";
+import { recordLifecycleEvent } from "./lifecycle-service";
 
 export interface SessionSummaryInput {
   projectId: string;
@@ -23,6 +26,14 @@ export interface SessionSummaryInput {
   handoffNotes?: string;
   sourceEvent?: string;
   dryRun?: boolean;
+  autoApprove?: boolean;
+  requireReview?: boolean;
+}
+
+export interface SessionCloseInput extends SessionSummaryInput {
+  commands?: string[];
+  decisions?: string[];
+  tooling?: Array<{ name: string; files?: string[]; note?: string }>;
 }
 
 export interface SessionSummaryResult {
@@ -30,6 +41,7 @@ export interface SessionSummaryResult {
   proposalId?: string;
   text: string;
   message: string;
+  results?: McpProposalResult[];
 }
 
 export interface SessionHistoryQuery {
@@ -59,6 +71,35 @@ export function buildSessionSummaryText(input: SessionSummaryInput): string {
     .join("\n");
 }
 
+function proposeMemory(
+  db: Database,
+  input: {
+    kind: MemoryKind;
+    text: string;
+    projectId: string;
+    proposedBy: string;
+    rationale: string;
+    files?: string[];
+    autoApprove?: boolean;
+    requireReview?: boolean;
+  },
+): McpProposalResult {
+  return mcpPropose(
+    db,
+    {
+      kind: input.kind,
+      text: input.text,
+      projectId: input.projectId,
+      proposedBy: input.proposedBy,
+      rationale: input.rationale,
+      autoApprove: input.autoApprove,
+      requireReview: input.requireReview,
+      confidence: 0.7,
+    },
+    { extraPaths: input.files ?? [] },
+  );
+}
+
 export function summarizeSession(db: Database, input: SessionSummaryInput): SessionSummaryResult {
   const text = buildSessionSummaryText(input);
   if (input.dryRun) {
@@ -71,25 +112,15 @@ export function summarizeSession(db: Database, input: SessionSummaryInput): Sess
 
   registerSessionObservation(db, input);
 
-  const proposed = mcpPropose(db, {
+  const proposed = proposeMemory(db, {
     kind: "session_summary",
     text,
     projectId: input.projectId,
     proposedBy: `agent:${input.agentId}:session`,
     rationale: "First-class session handoff summary.",
-    evidence: [
-      {
-        source: `session:${input.agentId}`,
-        reference: input.sessionId ?? "unknown",
-        note: JSON.stringify({
-          parent_session_id: input.parentSessionId ?? null,
-          files: input.files ?? [],
-          source_event: input.sourceEvent ?? null,
-        }),
-      },
-    ],
-    requireReview: true,
-    confidence: 0.6,
+    files: input.files,
+    autoApprove: input.autoApprove ?? true,
+    requireReview: input.requireReview,
   });
 
   return {
@@ -97,6 +128,105 @@ export function summarizeSession(db: Database, input: SessionSummaryInput): Sess
     proposalId: proposed.proposal_id,
     text,
     message: proposed.message,
+    results: [proposed],
+  };
+}
+
+export function closeSession(db: Database, input: SessionCloseInput): SessionSummaryResult {
+  const text = buildSessionSummaryText(input);
+  if (input.dryRun) {
+    return {
+      status: "dry_run",
+      text,
+      message: "Dry run: session close normalized without creating proposals.",
+    };
+  }
+
+  registerSessionObservation(db, input);
+  const proposedBy = `agent:${input.agentId}:session`;
+  const results: McpProposalResult[] = [];
+
+  const summaryExtras = [
+    input.commands?.length ? `commands=${input.commands.join("; ")}` : null,
+  ].filter(Boolean);
+  const summaryText = [text, ...summaryExtras].join("\n");
+
+  results.push(
+    proposeMemory(db, {
+      kind: "session_summary",
+      text: summaryText,
+      projectId: input.projectId,
+      proposedBy,
+      rationale: "End-of-turn session summary.",
+      files: input.files,
+      autoApprove: input.autoApprove ?? true,
+      requireReview: input.requireReview,
+    }),
+  );
+
+  for (const decision of input.decisions ?? []) {
+    results.push(
+      proposeMemory(db, {
+        kind: "decision",
+        text: decision,
+        projectId: input.projectId,
+        proposedBy,
+        rationale: "Decision captured during session close.",
+        autoApprove: input.autoApprove ?? true,
+        requireReview: input.requireReview,
+      }),
+    );
+  }
+
+  for (const tool of input.tooling ?? []) {
+    const toolFiles = tool.files ?? [];
+    const toolText = [
+      `Tooling setup: ${tool.name}.`,
+      tool.note ? `note=${tool.note}` : null,
+      toolFiles.length ? `files=${toolFiles.join(",")}` : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    results.push(
+      proposeMemory(db, {
+        kind: "tooling",
+        text: toolText,
+        projectId: input.projectId,
+        proposedBy,
+        rationale: "Tooling/setup captured during session close.",
+        files: toolFiles,
+        autoApprove: input.autoApprove ?? true,
+        requireReview: input.requireReview,
+      }),
+    );
+  }
+
+  if (
+    (input.tooling?.length ?? 0) === 0 &&
+    looksLikeToolingMemory(input.summary, input.files ?? [])
+  ) {
+    results.push(
+      proposeMemory(db, {
+        kind: "tooling",
+        text: input.summary,
+        projectId: input.projectId,
+        proposedBy,
+        rationale: "Inferred tooling memory from session summary.",
+        files: input.files,
+        autoApprove: input.autoApprove ?? true,
+        requireReview: input.requireReview,
+      }),
+    );
+  }
+
+  const lines = results.flatMap((result) => [result.message, ...formatProposalResultExtras(result)]);
+
+  return {
+    status: results.every((result) => result.status === "approved") ? "approved" : "pending",
+    proposalId: results[0]?.proposal_id,
+    text: summaryText,
+    message: lines.join("\n"),
+    results,
   };
 }
 
@@ -116,6 +246,7 @@ export function registerSessionObservation(
     handoff_notes: input.handoffNotes ?? null,
     metadata_json: JSON.stringify({
       files: input.files ?? [],
+      commands: input.commands ?? [],
       source_event: input.sourceEvent ?? null,
       payload_hash: input.payloadHash ?? null,
       ...(input.metadata ?? {}),

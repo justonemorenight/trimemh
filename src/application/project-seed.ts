@@ -55,6 +55,7 @@ export function seedProjectMemories(
     projectId,
     source: "memh:seed",
     confidence: 0.9,
+    metadata: { specificity: "bootstrap" },
   });
   seeds.push(overview);
 
@@ -81,6 +82,7 @@ export function seedProjectMemories(
       projectId,
       source: "memh:seed",
       confidence: 0.85,
+      metadata: { specificity: "bootstrap" },
     });
     seeds.push(tech);
   }

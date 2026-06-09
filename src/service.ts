@@ -59,6 +59,8 @@ export {
   mcpRetrieveFull,
   mcpSearch,
   mcpStats,
+  formatProjectMismatchWarnings,
+  formatProposalResultExtras,
 } from "./service/mcp-service";
 // Normalized lifecycle event adapters
 export {
@@ -74,6 +76,7 @@ export { approve, proposals, propose, reject, status } from "./service/proposal-
 // Session workflows
 export {
   buildSessionSummaryText,
+  closeSession,
   listSessionRegistry,
   listSessionSummaries,
   registerSessionObservation,

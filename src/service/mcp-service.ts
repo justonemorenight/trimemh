@@ -15,10 +15,18 @@ import type {
   ProposeMemoryEdgeInput,
   RelatedMemoryResult,
   RiskLevel,
+  SuggestedCodeLink,
 } from "../domain/schema";
 import { KIND_RISK_MAP } from "../domain/schema";
-import { getMemoryById, getMemoryStats, getRelatedMemoryRows } from "../persistence/repository";
+import { getMemoryStats, getRelatedMemoryRows } from "../persistence/repository";
+import { getActiveMemoryCountsByProject } from "../persistence/proposal-repo";
 import { shouldAutoApproveLink, shouldAutoApproveMemory } from "./auto-approval";
+import { suggestCodeLinksFromText } from "./code-link-suggest";
+import { resolveMemoryId } from "./id-resolution";
+import {
+  findSimilarPendingProposal,
+  mergePendingProposal,
+} from "./proposal-dedup";
 import {
   approveMemoryLinkProposal,
   getRelatedMemories,
@@ -101,13 +109,33 @@ export function mcpHybridSearch(
  * Auto-approve can be enabled via TRIMEMH_AUTO_APPROVE env var or
  * by setting CONFIG.autoApprove.enabled = true.
  */
-export function mcpPropose(db: Database, input: ProposeInput): McpProposalResult {
+export function mcpPropose(
+  db: Database,
+  input: ProposeInput,
+  opts?: { extraPaths?: string[] },
+): McpProposalResult {
   const risk: RiskLevel = KIND_RISK_MAP[input.kind];
+  const suggested = suggestCodeLinksFromText(input.text, opts?.extraPaths ?? []);
+
+  const similar = findSimilarPendingProposal(db, input.projectId, input.kind, input.text);
+  if (similar && !input.requireReview) {
+    mergePendingProposal(db, similar, input.text, input.rationale);
+    return {
+      proposal_id: similar.id,
+      status: "pending",
+      risk_level: risk,
+      merged_into_proposal_id: similar.id,
+      suggested_code_links: suggested,
+      message: `Merged into existing pending proposal ${similar.id} (similar ${input.kind}). Review with memory_list_proposals.`,
+    };
+  }
+
   const decision = shouldAutoApproveMemory({
     kind: input.kind,
     source: input.proposedBy,
     confidence: input.confidence,
     requireReview: input.requireReview,
+    autoApprove: input.autoApprove,
   });
 
   if (decision.autoApprove) {
@@ -118,33 +146,56 @@ export function mcpPropose(db: Database, input: ProposeInput): McpProposalResult
       proposal_id: proposal.id,
       status: "approved",
       risk_level: risk,
+      memory_id: approved?.id,
+      suggested_code_links: suggested,
       message: approved
         ? `Auto-approved: memory ${approved.id} created. Risk: ${risk}.`
         : `Auto-approved: proposal ${proposal.id} processed (delete action).`,
     };
   }
 
-  // Default: create pending proposal for agent review
   const proposal = propose(db, input);
 
   return {
     proposal_id: proposal.id,
     status: "pending",
     risk_level: risk,
+    suggested_code_links: suggested,
     message: `Proposal ${proposal.id} created (pending agent review). Review in next turn with memory_list_proposals.`,
   };
 }
 
 export function mcpGet(db: Database, projectId: string, id: string): MemoryItem | null {
-  const item = getMemoryById(db, id);
-  if (!item || item.project_id !== projectId) {
+  try {
+    return resolveMemoryId(db, projectId, id);
+  } catch {
     return null;
   }
-  return item;
 }
 
 export function mcpStats(db: Database, projectId: string): MemoryStats {
   return getMemoryStats(db, projectId);
+}
+
+export function formatProjectMismatchWarnings(
+  db: Database,
+  projectId: string,
+  stats: MemoryStats,
+): string[] {
+  if (stats.total > 0) {
+    return [];
+  }
+
+  const counts = getActiveMemoryCountsByProject(db);
+  const others = counts.filter((row) => row.project_id !== projectId && row.cnt > 0);
+  if (others.length === 0) {
+    return [];
+  }
+
+  const summary = others.map((row) => `${row.project_id} (${row.cnt})`).join(", ");
+  return [
+    `⚠️ Warning: DB has active memories for other project_id(s): ${summary} — current project "${projectId}" has 0`,
+  ];
 }
 
 export function mcpRelated(
@@ -153,7 +204,8 @@ export function mcpRelated(
   memoryId: string,
   depth = 1,
 ): RelatedMemoryResult[] {
-  return getRelatedMemories(db, projectId, memoryId, depth);
+  const resolved = resolveMemoryId(db, projectId, memoryId);
+  return getRelatedMemories(db, projectId, resolved.id, depth);
 }
 
 /**
@@ -236,12 +288,14 @@ export function mcpRetrieveFull(
   projectId: string,
   id: string,
 ): { item: MemoryItem; retrieval_context: string } | null {
-  const item = getMemoryById(db, id);
-  if (!item || item.project_id !== projectId) {
+  let item: MemoryItem;
+  try {
+    item = resolveMemoryId(db, projectId, id);
+  } catch {
     return null;
   }
 
-  const related = getRelatedMemoryRows(db, projectId, id, 1).slice(0, 5);
+  const related = getRelatedMemoryRows(db, projectId, item.id, 1).slice(0, 5);
   const relatedText =
     related.length > 0
       ? "\n\nRelated memories:\n" +
@@ -268,6 +322,25 @@ export function mcpRetrieveFull(
       relatedText,
     ].join("\n"),
   };
+}
+
+export function formatProposalResultExtras(result: McpProposalResult): string[] {
+  const lines: string[] = [];
+  if (result.memory_id) {
+    lines.push(`memory_id: ${result.memory_id}`);
+  }
+  if (result.merged_into_proposal_id) {
+    lines.push(`merged_into: ${result.merged_into_proposal_id}`);
+  }
+  if (result.suggested_code_links?.length) {
+    lines.push(
+      ...result.suggested_code_links.map(
+        (link: SuggestedCodeLink) =>
+          `suggested_code_link: ${link.path} (${link.relation})`,
+      ),
+    );
+  }
+  return lines;
 }
 
 export function mcpCodeSearch(

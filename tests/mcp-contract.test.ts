@@ -117,19 +117,32 @@ describe("MCP Contract", () => {
   // ─── memory_propose ────────────────────────────────────────
 
   describe("memory_propose", () => {
-    it("should create a pending proposal for agent review", () => {
+    it("should create a pending proposal when require_review is set", () => {
       const result = mcpPropose(db, {
         kind: "code_context",
         text: "MCP test: src/db.ts handles all SQLite operations",
         projectId: PROJECT,
         proposedBy: "mcp:agent",
         rationale: "Captured from code review",
+        requireReview: true,
       });
 
       expect(result.proposal_id).toBeDefined();
       expect(result.status).toBe("pending");
       expect(result.risk_level).toBe("medium");
       expect(result.message).toContain("pending agent review");
+    });
+
+    it("auto-approves low/medium-risk proposals by default", () => {
+      const result = mcpPropose(db, {
+        kind: "tooling",
+        text: "MCP test: configured Biome in frontend/biome.json",
+        projectId: PROJECT,
+        proposedBy: "mcp:agent",
+      });
+
+      expect(result.status).toBe("approved");
+      expect(result.memory_id).toBeDefined();
     });
 
     it("should keep critical proposals pending", () => {
@@ -196,7 +209,7 @@ describe("MCP Contract", () => {
   // ─── graph MCP tools ──────────────────────────────────────
 
   describe("memory graph MCP tools", () => {
-    it("should create pending memory link proposal only", () => {
+    it("should auto-approve memory link proposals by default", () => {
       const source = mcpSearch(db, PROJECT, "TypeScript")[0]!;
       const target = mcpSearch(db, PROJECT, "Vitest")[0]!;
 
@@ -209,11 +222,29 @@ describe("MCP Contract", () => {
         rationale: "TypeScript setup supports the testing decision",
       });
 
+      expect(result.status).toBe("approved");
+      expect(result.proposal_type).toBe("memory_edge");
+
+      const related = mcpRelated(db, PROJECT, source.id, 1);
+      expect(related.some((r) => r.item.id === target.id)).toBe(true);
+    });
+
+    it("should keep link proposals pending when require_review is set", () => {
+      const source = mcpSearch(db, PROJECT, "indentation")[0]!;
+      const target = mcpSearch(db, PROJECT, "TypeScript")[0]!;
+
+      const result = mcpMemoryLinkPropose(db, {
+        projectId: PROJECT,
+        sourceMemoryId: source.id,
+        targetMemoryId: target.id,
+        relation: "depends_on",
+        proposedBy: "mcp:agent",
+        rationale: "Manual review link test",
+        requireReview: true,
+      });
+
       expect(result.status).toBe("pending");
       expect(result.proposal_type).toBe("memory_edge");
-      expect(result.message).toContain("pending agent review");
-
-      // Link is NOT active until approved by agent
       const relatedBefore = mcpRelated(db, PROJECT, source.id, 1);
       expect(relatedBefore.some((r) => r.item.id === target.id)).toBe(false);
     });
@@ -257,7 +288,7 @@ describe("MCP Contract", () => {
       expect(related.every((r) => r.depth <= 2)).toBe(true);
     });
 
-    it("should create pending code link proposal for agent review", () => {
+    it("should auto-approve code link proposals by default", () => {
       const memory = mcpSearch(db, PROJECT, "indentation")[0]!;
       const result = mcpMemoryCodeLinkPropose(db, {
         projectId: PROJECT,
@@ -269,14 +300,44 @@ describe("MCP Contract", () => {
         rationale: "Indentation preference applies to CLI edits",
       });
 
-      expect(result.status).toBe("pending");
+      expect(result.status).toBe("approved");
       expect(result.proposal_type).toBe("memory_code_link");
-      // Code link is NOT active until approved
-      expect(mcpCodeSearch(db, PROJECT, "src/cli.ts").length).toBe(0);
+      expect(mcpCodeSearch(db, PROJECT, "src/cli.ts").length).toBeGreaterThan(0);
+    });
 
-      // After agent approval
+    it("should keep code link pending when require_review is set", () => {
+      const memory = mcpSearch(db, PROJECT, "TypeScript")[0]!;
+      const result = mcpMemoryCodeLinkPropose(db, {
+        projectId: PROJECT,
+        memoryId: memory.id,
+        path: "src/db.ts",
+        entityType: "file",
+        relation: "documents",
+        proposedBy: "mcp:agent",
+        rationale: "Manual review code link test",
+        requireReview: true,
+      });
+
+      expect(result.status).toBe("pending");
+      expect(mcpCodeSearch(db, PROJECT, "src/db.ts").length).toBe(0);
+    });
+
+    it("legacy code link approval flow still works", () => {
+      const memory = mcpSearch(db, PROJECT, "indentation")[0]!;
+      const result = mcpMemoryCodeLinkPropose(db, {
+        projectId: PROJECT,
+        memoryId: memory.id,
+        path: "src/other.ts",
+        entityType: "file",
+        relation: "warns_about",
+        proposedBy: "mcp:agent",
+        rationale: "Indentation preference applies to CLI edits",
+        requireReview: true,
+      });
+
+      expect(result.status).toBe("pending");
       approveMemoryLinkProposal(db, PROJECT, result.proposal_id, "mcp:agent");
-      const results = mcpCodeSearch(db, PROJECT, "src/cli.ts");
+      const results = mcpCodeSearch(db, PROJECT, "src/other.ts");
       expect(results.some((r) => r.item.id === memory.id)).toBe(true);
     });
 
@@ -298,14 +359,14 @@ describe("MCP Contract", () => {
   // ─── Proposal → Approval flow end-to-end ──────────────────
 
   describe("MCP propose → agent review flow", () => {
-    it("should create pending proposal and complete governance cycle on approval", () => {
-      // 1. Agent proposes via MCP → pending
+    it("should complete governance cycle on approval after require_review", () => {
       const result = mcpPropose(db, {
         kind: "session_summary",
         text: "E2E test: completed MCP contract test implementation",
         projectId: PROJECT,
         proposedBy: "mcp:agent",
         rationale: "End-to-end governance verification",
+        requireReview: true,
       });
 
       expect(result.status).toBe("pending");
@@ -388,6 +449,7 @@ describe("MCP Contract", () => {
         proposedBy: "mcp:agent",
         rationale: "Testing arguments_hash propagation",
         argumentsHash: "a5e9a4e3b1c67d8f9214b6287c88b77a06f3b253b211a762e5b8e90ff8a7d5c9",
+        requireReview: true,
       });
 
       expect(result.proposal_id).toBeDefined();

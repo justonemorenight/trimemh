@@ -1,6 +1,6 @@
 import { Command } from "commander";
 
-import { loadConfig } from "../infrastructure/config";
+import { loadResolvedConfig } from "../infrastructure/config";
 import { formatConfigAsJSON, generateMCPConfig } from "../mcp/config-gen";
 import { startMcpServer } from "../mcp/server";
 import { getDb, runMigrations } from "../persistence/db";
@@ -22,13 +22,17 @@ export function registerMcpCommands(program: Command): void {
         .action(async (opts) => {
           redirectConsoleLogToStderr();
 
-          const config = loadConfig();
-          const dbPath = opts.db ?? config.dbPath;
-          const db = getDb(dbPath);
+          const config = loadResolvedConfig(undefined, { dbPath: opts.db });
+          const db = getDb(config.dbPath);
           runMigrations(db);
 
-          console.error(`[triMemh] MCP server starting (project: ${config.projectId})`);
-          await startMcpServer(db, config.projectId);
+          console.error(
+            `[triMemh] MCP server starting (project: ${config.projectId}, db: ${config.dbPath})`,
+          );
+          for (const warning of config.meta.warnings) {
+            console.error(`[triMemh] WARNING: ${warning}`);
+          }
+          await startMcpServer(db, config);
           // MCP server runs until stdin closes
         }),
     )
@@ -36,7 +40,7 @@ export function registerMcpCommands(program: Command): void {
       new Command("config")
         .description("Generate MCP client config JSON for Claude Code, Cursor, etc.")
         .action(() => {
-          const memhConfig = loadConfig();
+          const memhConfig = loadResolvedConfig();
           const generated = generateMCPConfig(memhConfig, "generic");
           console.log(formatConfigAsJSON(generated));
           console.error("\n[triMemh] Add this to your MCP client config.");

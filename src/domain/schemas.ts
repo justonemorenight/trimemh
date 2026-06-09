@@ -81,7 +81,11 @@ export const ProposeSchema = z.object({
     .boolean()
     .optional()
     .default(false)
-    .describe("Set to true to bypass auto-approve"),
+    .describe("Force manual review even when auto-approve would apply"),
+  auto_approve: z
+    .boolean()
+    .optional()
+    .describe("Request immediate approval when risk level allows (overrides default pending)"),
   confidence: confidenceField.optional().describe("Confidence score (0-1)"),
   evidence: z.array(EvidenceSchema).optional().describe("Supporting evidence"),
 });
@@ -273,3 +277,39 @@ export const DecisionSchema = z.object({
 });
 
 export type DecisionInput = z.infer<typeof DecisionSchema>;
+
+// ─── memory_session_close ──────────────────────────────────────────
+
+export const SessionCloseSchema = z.object({
+  summary: z
+    .string()
+    .min(1)
+    .max(CONFIG.zod.maxMemoryText)
+    .pipe(maxText)
+    .describe("What happened this turn/session"),
+  files: z.array(pathField).optional().describe("Files touched"),
+  commands: z.array(z.string().max(200)).optional().describe("Notable commands run"),
+  decisions: z
+    .array(safeString(CONFIG.guardrails.maxStringBytes))
+    .optional()
+    .describe("Product/engineering decisions made"),
+  tooling: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(120),
+        files: z.array(pathField).optional(),
+        note: z.string().max(CONFIG.zod.maxMemoryRationale).optional(),
+      }),
+    )
+    .optional()
+    .describe("Tooling/setup changes (Biome, Tailwind, etc.)"),
+  handoff_notes: z.string().max(CONFIG.zod.maxMemoryRationale).optional(),
+  session_id: z.string().max(CONFIG.zod.maxEntityLength).optional(),
+  auto_approve: z
+    .boolean()
+    .optional()
+    .default(true)
+    .describe("Auto-approve created memories when risk allows"),
+});
+
+export type SessionCloseInput = z.infer<typeof SessionCloseSchema>;

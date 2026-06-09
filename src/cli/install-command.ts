@@ -246,6 +246,11 @@ function shouldIncludeCwd(agent: AgentDefinition): boolean {
   return !["claude-code", "codex"].includes(agent.id);
 }
 
+function shouldIncludeEnv(agent: AgentDefinition): boolean {
+  // Pin project/db when MCP clients may ignore cwd (e.g. Cursor global mcp.json).
+  return agent.id !== "claude-code";
+}
+
 function tomlString(value: string): string {
   return JSON.stringify(value);
 }
@@ -550,6 +555,7 @@ export function formatInstallPreview(
   const generated = generateMCPConfig(memhConfig, detected.agent.target, {
     projectRoot: projectRoot(),
     includeCwd: shouldIncludeCwd(detected.agent),
+    includeEnv: shouldIncludeEnv(detected.agent),
   });
   const sections: string[] = [];
   if (detected.agent.id === "claude-code" && detected.agent.useCliInstall) {
@@ -652,6 +658,7 @@ export function installForAgent(
     const generated = generateMCPConfig(memhConfig, agent.target, {
       projectRoot: projectRoot(),
       includeCwd: shouldIncludeCwd(agent),
+      includeEnv: shouldIncludeEnv(agent),
     });
     const newConfig = generated.config;
     let mcpResult: InstallResult;

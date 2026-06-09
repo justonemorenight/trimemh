@@ -12,12 +12,16 @@ import type {
   RiskLevel,
 } from "../domain/schema";
 import { CODE_LINK_RELATIONS, KIND_RISK_MAP, MEMORY_EDGE_RELATIONS } from "../domain/schema";
+import { formatConfigDebugLines, type ResolvedTriMemhConfig } from "../infrastructure/config";
 import { capSearchLimit, guardOutput, guardedArgumentsHash } from "../infrastructure/guardrail";
 import type { RateLimiter } from "../infrastructure/rate-limit";
 import { embedText } from "../retrieval/embedding-provider";
 import { applyFeedback } from "../retrieval/feedback";
 import {
   approve,
+  closeSession,
+  formatProjectMismatchWarnings,
+  formatProposalResultExtras,
   getCodeImpact,
   mcpCodeSearch,
   mcpGet,
@@ -32,6 +36,11 @@ import {
   proposals,
   reject,
 } from "../service";
+import { formatIdLine } from "../service/id-resolution";
+import {
+  formatProposalBatchHints,
+  staleProposalIds,
+} from "../service/proposal-dedup";
 import { checkRateLimit } from "./runtime";
 import {
   ApproveSchema,
@@ -48,6 +57,7 @@ import {
   RelatedInputSchema,
   RetrieveInputSchema,
   SearchInputSchema,
+  SessionCloseInputSchema,
 } from "./schemas";
 
 type TextContent = { type: "text"; text: string };
@@ -62,9 +72,18 @@ function rateLimitError(retryAfter: number): { content: TextContent[]; isError: 
 export function registerMemoryTools(
   server: McpServer,
   db: Database,
-  projectId: string,
+  config: ResolvedTriMemhConfig,
   rateLimiter: RateLimiter,
 ): void {
+  const { projectId } = config;
+
+  function runtimeDebugLines(): string[] {
+    return formatConfigDebugLines(config);
+  }
+
+  function statsDebugLines(stats: ReturnType<typeof mcpStats>): string[] {
+    return [...runtimeDebugLines(), ...formatProjectMismatchWarnings(db, projectId, stats)];
+  }
   server.registerTool(
     "memory_search",
     {
@@ -123,7 +142,7 @@ export function registerMemoryTools(
               const why = r.explanation
                 ? `\n  why: score=${r.explanation.composite_score} | ${r.explanation.why_selected.join(" ")}`
                 : "";
-              return `[${r.id.slice(0, CONFIG.mcp.shortIdLength)}] (${r.kind}, confidence: ${r.confidence})\n  ${r.snippet}\n  source: ${r.source} | created: ${r.created_at?.slice(0, 10) ?? "unknown"}${why}${related}`;
+              return `[${r.id.slice(0, CONFIG.mcp.shortIdLength)}] (${r.kind}, confidence: ${r.confidence})\n  ${formatIdLine(r.id)}\n  ${r.snippet}\n  source: ${r.source} | created: ${r.created_at?.slice(0, 10) ?? "unknown"}${why}${related}`;
             })
             .join("\n\n"),
         );
@@ -175,6 +194,7 @@ export function registerMemoryTools(
         });
 
         const metadata = [
+          ...runtimeDebugLines(),
           `selected_detail_ids=${assembled.selectedDetailIds.join(",") || "none"}`,
           `lineage_ids=${assembled.lineageIds.join(",") || "none"}`,
           `compacted_index=${assembled.compactedIndex}`,
@@ -561,7 +581,7 @@ export function registerMemoryTools(
     "memory_propose",
     {
       description:
-        "Propose a new memory to persist project knowledge. Creates a PENDING proposal for agent review — the memory is NOT active until approved. IMPORTANT: After proposing, use memory_list_proposals in your next turn to see pending proposals, then memory_approve or memory_reject to decide. High-risk and critical-risk proposals should be reviewed carefully. Set require_review=true to force review for any risk level. Use this when you discover important facts, decisions, constraints, or patterns about the project.",
+        "Propose a new memory to persist project knowledge. Low/medium-risk kinds auto-approve by default. Set require_review=true to force pending review, or auto_approve=false to force pending. Set auto_approve=true to request immediate approval when risk allows. After proposing, check suggested_code_link paths and call memory_code_link_propose if useful.",
       inputSchema: ProposeInputSchema,
     },
     // biome-ignore lint/suspicious/useAwait: warning suppression
@@ -571,7 +591,7 @@ export function registerMemoryTools(
         return rateLimitError(rl.retryAfter);
       }
 
-      const { kind, text, rationale, require_review, confidence } = params;
+      const { kind, text, rationale, require_review, auto_approve, confidence } = params;
       const validKinds = Object.keys(KIND_RISK_MAP);
       if (!validKinds.includes(kind as string)) {
         return {
@@ -599,10 +619,11 @@ export function registerMemoryTools(
           rationale: rationale ?? undefined,
           argumentsHash: argsHash,
           requireReview: require_review ?? undefined,
+          autoApprove: auto_approve ?? undefined,
           confidence: confidence ?? undefined,
         });
 
-        const msg = [result.message];
+        const msg = [result.message, ...formatProposalResultExtras(result)];
 
         if (result.status === "approved") {
           msg.push("✅ Memory is now active and searchable.");
@@ -660,6 +681,8 @@ export function registerMemoryTools(
       try {
         const items = proposals(db, projectId, filterStatus);
         const limited = items.slice(0, limit);
+        const stale = staleProposalIds(limited);
+        const hints = formatProposalBatchHints(limited);
 
         if (limited.length === 0) {
           return {
@@ -670,16 +693,22 @@ export function registerMemoryTools(
         const text = limited
           .map(
             (p) =>
-              `[${p.id.slice(0, 8)}] ${p.risk_level.padEnd(8)} | ${p.proposed_kind.padEnd(16)} | ${p.proposed_by}\n  "${p.proposed_text.slice(0, 120)}${p.proposed_text.length > 120 ? "…" : ""}"\n  rationale: ${p.rationale ?? "none"}`,
+              `[${p.id.slice(0, 8)}] ${formatIdLine(p.id)}\n  ${p.risk_level.padEnd(8)} | ${p.proposed_kind.padEnd(16)} | ${p.proposed_by}${stale.has(p.id) ? " | stale" : ""}\n  "${p.proposed_text.slice(0, 120)}${p.proposed_text.length > 120 ? "…" : ""}"\n  rationale: ${p.rationale ?? "none"}`,
           )
           .join("\n\n");
+
+        const footer = [
+          "",
+          ...hints,
+          "── Use memory_approve <id> to accept or memory_reject <id> to decline.",
+        ].join("\n");
 
         return {
           content: [
             {
               type: "text" as const,
               text: guardOutput(
-                `${limited.length} ${filterStatus} proposal(s):\n\n${text}\n\n── Use memory_approve <id> to accept or memory_reject <id> to decline.`,
+                `${limited.length} ${filterStatus} proposal(s):\n\n${text}${footer}`,
               ),
             },
           ],
@@ -926,7 +955,8 @@ export function registerMemoryTools(
         });
 
         const msg = [
-          `Feedback recorded for ${memory_id.slice(0, CONFIG.mcp.shortIdLength)}`,
+          `Feedback recorded for ${result.memoryId.slice(0, CONFIG.mcp.shortIdLength)}`,
+          formatIdLine(result.memoryId),
           `Score: ${result.previousScore} → ${result.newScore} (${result.direction})`,
           `Total feedback events: ${result.totalFeedbackEvents}`,
         ];
@@ -943,6 +973,52 @@ export function registerMemoryTools(
             {
               type: "text" as const,
               text: guardOutput(`Feedback error: ${(err as Error).message}`),
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "memory_session_close",
+    {
+      description:
+        "End-of-turn/session compact summary. Creates normalized session_summary, decision, and tooling memories in one call. Auto-approves low/medium risk by default. Returns suggested_code_link paths extracted from files/text.",
+      inputSchema: SessionCloseInputSchema,
+    },
+    // biome-ignore lint/suspicious/useAwait: warning suppression
+    async (params) => {
+      const rl = checkRateLimit(rateLimiter, "memory_session_close");
+      if (!rl.allowed) {
+        return rateLimitError(rl.retryAfter);
+      }
+
+      try {
+        const result = closeSession(db, {
+          projectId,
+          agentId: "mcp:agent",
+          sessionId: params.session_id,
+          summary: params.summary,
+          files: params.files,
+          commands: params.commands,
+          decisions: params.decisions,
+          tooling: params.tooling,
+          handoffNotes: params.handoff_notes,
+          autoApprove: params.auto_approve,
+          requireReview: false,
+        });
+
+        return {
+          content: [{ type: "text" as const, text: guardOutput(result.message) }],
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: guardOutput(`Session close error: ${(err as Error).message}`),
             },
           ],
           isError: true,
@@ -969,6 +1045,8 @@ export function registerMemoryTools(
         const stats = mcpStats(db, projectId);
         const text = guardOutput(
           [
+            ...statsDebugLines(stats),
+            "",
             `Total active memories: ${stats.total}`,
             `Pending proposals: ${stats.pendingProposals}`,
             `By kind: ${JSON.stringify(stats.byKind)}`,

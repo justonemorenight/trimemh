@@ -52,6 +52,7 @@ export {
 } from "./memory-repo";
 // Proposals + Audit + Stats
 export {
+  getActiveMemoryCountsByProject,
   getAuditEvents,
   getMemoryStats,
   getProposalById,

@@ -132,7 +132,7 @@ describe("Database", () => {
       cnt: number;
     };
     // Should still have just the known migrations
-    expect(rows.cnt).toBe(6);
+    expect(rows.cnt).toBe(7);
   });
 
   it("should have WAL mode enabled", () => {

@@ -19,6 +19,7 @@ import {
   RejectSchema,
   RelatedSchema,
   RetrieveSchema,
+  SessionCloseSchema,
 } from "../domain/schemas";
 
 // ─── MCP-specific Search schema (tighter limit than REST API) ──────
@@ -61,4 +62,5 @@ export {
   RejectSchema,
   RelatedSchema as RelatedInputSchema,
   RetrieveSchema as RetrieveInputSchema,
+  SessionCloseSchema as SessionCloseInputSchema,
 };

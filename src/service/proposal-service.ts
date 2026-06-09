@@ -33,6 +33,7 @@ import { contentHash } from "../retrieval/dedup";
 import { serializeEmbedding } from "../retrieval/embedding";
 import { localEmbeddingProvider } from "../retrieval/embedding-provider";
 import { audit, embeddingForText, guardedPayload, json, now } from "./helpers";
+import { resolveProposalId } from "./id-resolution";
 import { recordLifecycleEvent } from "./lifecycle-service";
 
 // ─── Propose (from agent/MCP/reflect) ─────────────────────────────
@@ -143,26 +144,7 @@ export function approve(
   proposalId: string,
   decidedBy = "user",
 ): MemoryItem | null {
-  let proposal = getProposalById(db, proposalId);
-  if (!proposal) {
-    const pendingProposals = listPendingProposals(db, projectId);
-    const matched = pendingProposals.filter((p) => p.id.startsWith(proposalId));
-    if (matched.length === 1) {
-      proposal = matched[0] || null;
-    } else if (matched.length > 1) {
-      throw new Error(
-        `Proposal prefix "${proposalId}" is ambiguous. Matched: ${matched.map((p) => p.id).join(", ")}`,
-      );
-    }
-  }
-
-  if (!proposal) {
-    throw new Error(`Proposal "${proposalId}" not found.`);
-  }
-
-  if (proposal.project_id !== projectId) {
-    throw new Error("Proposal belongs to a different project.");
-  }
+  const proposal = resolveProposalId(db, projectId, proposalId);
   if (proposal.status !== "pending") {
     throw new Error(`Proposal is already ${proposal.status}.`);
   }
@@ -184,7 +166,7 @@ export function approve(
       action: proposal.action,
     },
   });
-  audit(db, projectId, decidedBy, "proposal_approved", "memory_proposal", proposalId, {
+  audit(db, projectId, decidedBy, "proposal_approved", "memory_proposal", proposal.id, {
     kind: proposal.proposed_kind,
     risk_level: proposal.risk_level,
   });
@@ -210,7 +192,7 @@ export function approve(
       content_hash: hash,
       evidence_json: proposal.evidence_json,
       metadata_json: json({
-        approved_from_proposal: proposalId,
+        approved_from_proposal: proposal.id,
         embedding_provider: localEmbeddingProvider.name,
       }),
       embedding: serializeEmbedding(embeddingForText(proposal.proposed_text)),
@@ -226,7 +208,7 @@ export function approve(
       entityId: item.id,
       state: "merged",
       actor: decidedBy,
-      payload: { from_proposal: proposalId },
+      payload: { from_proposal: proposal.id },
     });
     audit(db, projectId, decidedBy, "memory_created", "memory_item", item.id, {
       from_proposal: proposalId,
@@ -297,24 +279,7 @@ export function reject(
   note: string,
   decidedBy = "user",
 ): MemoryProposal {
-  let proposal = getProposalById(db, proposalId);
-  if (!proposal) {
-    const pendingProposals = listPendingProposals(db, projectId);
-    const matched = pendingProposals.filter((p) => p.id.startsWith(proposalId));
-    if (matched.length === 1) {
-      proposal = matched[0] || null;
-    } else if (matched.length > 1) {
-      throw new Error(`Proposal prefix "${proposalId}" is ambiguous.`);
-    }
-  }
-
-  if (!proposal) {
-    throw new Error(`Proposal "${proposalId}" not found.`);
-  }
-
-  if (proposal.project_id !== projectId) {
-    throw new Error("Proposal belongs to a different project.");
-  }
+  const proposal = resolveProposalId(db, projectId, proposalId);
   if (proposal.status !== "pending") {
     throw new Error(`Proposal is already ${proposal.status}.`);
   }

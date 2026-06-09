@@ -32,6 +32,8 @@ export interface RecallScoreInput {
   isCodePathMatch: boolean;
   /** Whether this is an operational/security-critical context. */
   isOperationalContext: boolean;
+  /** Original query text for task-specific ranking. */
+  query?: string;
 }
 
 export interface RecallScoreResult {
@@ -48,6 +50,7 @@ export interface RecallScoreResult {
     riskBoost: number;
     graphBoost: number;
     codePathBoost: number;
+    specificityPenalty: number;
   };
 }
 
@@ -63,6 +66,7 @@ export interface ScoreWeights {
   riskBoost: number;
   graphBoost: number;
   codePathBoost: number;
+  specificityPenalty: number;
 }
 
 /** Default weights (Engram-inspired). Sum = 1.0 for explainability. */
@@ -76,6 +80,7 @@ export const DEFAULT_WEIGHTS: ScoreWeights = {
   riskBoost: 0.05,
   graphBoost: 0.03,
   codePathBoost: 0.02,
+  specificityPenalty: 0.08,
 };
 
 /** Code-review profile: higher risk + confidence weights. */
@@ -88,7 +93,8 @@ export const CODE_REVIEW_WEIGHTS: ScoreWeights = {
   ftsBoost: 0.1,
   riskBoost: 0.1, // higher — security rules matter more
   graphBoost: 0.05,
-  codePathBoost: 0.05, // higher — code links matter more
+  codePathBoost: 0.05,
+  specificityPenalty: 0.08,
 };
 
 /** Planning profile: recency + graph signals dominate. */
@@ -102,6 +108,7 @@ export const PLANNING_WEIGHTS: ScoreWeights = {
   riskBoost: 0.05,
   graphBoost: 0.1, // higher — decision chains matter
   codePathBoost: 0.05,
+  specificityPenalty: 0.1,
 };
 
 // ─── Scoring functions ──────────────────────────────────────────────
@@ -167,6 +174,58 @@ function graphBoost(degree: number): number {
   return Math.min(0.3, Math.log(1 + degree) * 0.15);
 }
 
+const GENERIC_PATTERNS = [
+  /tri\s*memh/i,
+  /attached to project/i,
+  /memory (system|protocol)/i,
+  /codebase scan completed/i,
+  /detected tech stack/i,
+];
+
+function isTaskSpecificQuery(query?: string): boolean {
+  if (!query) {
+    return false;
+  }
+  const trimmed = query.trim();
+  if (trimmed.length < 24) {
+    return false;
+  }
+  if (/[/\\]/.test(trimmed)) {
+    return true;
+  }
+  return /\b(implement|fix|refactor|add|remove|update|migrate|debug|setup|configure)\b/i.test(
+    trimmed,
+  );
+}
+
+function memorySpecificityScore(item: MemoryItem): number {
+  try {
+    const meta = JSON.parse(item.metadata_json || "{}");
+    if (meta.specificity === "bootstrap" || meta.specificity === "generic") {
+      return 0.2;
+    }
+  } catch {
+    /* ignore */
+  }
+
+  const words = item.text.trim().split(/\s+/).length;
+  if (words <= 18) {
+    return 0.35;
+  }
+  if (GENERIC_PATTERNS.some((pattern) => pattern.test(item.text))) {
+    return 0.25;
+  }
+  return 1.0;
+}
+
+function specificityPenalty(item: MemoryItem, query?: string): number {
+  if (!isTaskSpecificQuery(query)) {
+    return 0;
+  }
+  const specificity = memorySpecificityScore(item);
+  return specificity >= 0.8 ? 0 : 1 - specificity;
+}
+
 /**
  * Compute weighted composite recall score for a single memory candidate.
  */
@@ -182,6 +241,7 @@ export function scoreRecall(
   const riskB = riskBoost(input.item.kind, input.isOperationalContext);
   const graphB = graphBoost(input.graphDegree);
   const codePathB = input.isCodePathMatch ? 1.0 : 0.0;
+  const specificity = specificityPenalty(input.item, input.query);
 
   const compositeScore =
     input.similarity * weights.similarity +
@@ -192,7 +252,8 @@ export function scoreRecall(
     ftsB * weights.ftsBoost +
     riskB * weights.riskBoost +
     graphB * weights.graphBoost +
-    codePathB * weights.codePathBoost;
+    codePathB * weights.codePathBoost -
+    specificity * weights.specificityPenalty;
 
   return {
     compositeScore: Math.round(compositeScore * 10_000) / 10_000,
@@ -206,6 +267,7 @@ export function scoreRecall(
       riskBoost: Math.round(riskB * 10_000) / 10_000,
       graphBoost: Math.round(graphB * 10_000) / 10_000,
       codePathBoost: Math.round(codePathB * 10_000) / 10_000,
+      specificityPenalty: Math.round(specificity * 10_000) / 10_000,
     },
   };
 }

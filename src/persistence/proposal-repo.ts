@@ -134,6 +134,16 @@ export function getAuditEvents(db: Database, projectId: string, limit = 50): Aud
 
 // ─── Stats ────────────────────────────────────────────────────────
 
+export function getActiveMemoryCountsByProject(
+  db: Database,
+): Array<{ project_id: string; cnt: number }> {
+  return db
+    .query(
+      "SELECT project_id, COUNT(*) as cnt FROM memory_items WHERE status = 'active' GROUP BY project_id ORDER BY cnt DESC;",
+    )
+    .all() as Array<{ project_id: string; cnt: number }>;
+}
+
 export function getMemoryStats(db: Database, projectId: string): MemoryStats {
   const totalRow = db
     .query("SELECT COUNT(*) as cnt FROM memory_items WHERE project_id = ? AND status = 'active';")

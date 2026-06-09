@@ -19,6 +19,7 @@ import type { Database } from "bun:sqlite";
 
 import { audit } from "../application/service-helpers";
 import { CONFIG } from "../config";
+import { resolveMemoryId } from "../service/id-resolution";
 import { getMemoryById, updateMemoryItem } from "../persistence/repository";
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -78,13 +79,7 @@ const FEEDBACK_CONFIG = {
  * it takes more negative feedback to cancel one positive feedback.
  */
 export function applyFeedback(db: Database, input: FeedbackInput): FeedbackResult {
-  const memory = getMemoryById(db, input.memoryId);
-  if (!memory) {
-    throw new Error(`Memory "${input.memoryId}" not found.`);
-  }
-  if (memory.project_id !== input.projectId) {
-    throw new Error(`Memory "${input.memoryId}" belongs to a different project.`);
-  }
+  const memory = resolveMemoryId(db, input.projectId, input.memoryId);
 
   // Parse existing metadata
   const metadata = JSON.parse(memory.metadata_json);
@@ -119,7 +114,7 @@ export function applyFeedback(db: Database, input: FeedbackInput): FeedbackResul
   updateMemoryItem(db, memory);
 
   // Audit
-  audit(db, input.projectId, input.actor, "memory_feedback", "memory_item", input.memoryId, {
+  audit(db, input.projectId, input.actor, "memory_feedback", "memory_item", memory.id, {
     useful: input.useful,
     reason: input.reason ?? "",
     previous_score: oldScore,
@@ -128,7 +123,7 @@ export function applyFeedback(db: Database, input: FeedbackInput): FeedbackResul
   });
 
   return {
-    memoryId: input.memoryId,
+    memoryId: memory.id,
     previousScore: Math.round(oldScore * 10_000) / 10_000,
     newScore: Math.round(newScore * 10_000) / 10_000,
     totalFeedbackEvents: events,

@@ -139,8 +139,8 @@ export const CONFIG = {
     maxInterfaceMembers: 8,
   },
   autoApprove: {
-    /** Master switch — when false, proposals go to pending for agent review. */
-    enabled: false,
+    /** Master switch — when true, low/medium-risk MCP proposals auto-approve by default. */
+    enabled: true,
     /** Auto-approve proposals at or below this risk level.
      *  "low" = only low risk auto-approved
      *  "medium" = low + medium auto-approved (default)
