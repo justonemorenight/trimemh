@@ -13,6 +13,19 @@ import {
   VISIBILITY,
 } from "./schema";
 
+const TASK_CONTEXT_TYPES = [
+  "code_generation",
+  "code_review",
+  "debugging",
+  "planning",
+  "refactoring",
+  "documentation",
+  "conversation",
+  "unknown",
+] as const;
+
+const EVIDENCE_MODES = ["auto", "off", "force"] as const;
+
 // ─── Shared validation primitives ──────────────────────────────────
 
 /** Refine that validates a string is under the guardrail byte limit. */
@@ -206,7 +219,48 @@ export const ContextSchema = z.object({
     .min(CONFIG.context.minModelTokens)
     .max(CONFIG.context.maxModelTokens)
     .default(CONFIG.context.defaultModelTokens)
-    .describe("Model context window tokens; memory context is capped to 10%"),
+    .describe("Model context window tokens; memory context is adaptively budgeted"),
+  task_type: z
+    .enum(TASK_CONTEXT_TYPES)
+    .optional()
+    .describe("Override task type for adaptive memory context budgeting"),
+  memory_context_budget_ratio: z
+    .number()
+    .min(0.01)
+    .max(0.5)
+    .optional()
+    .describe("Override memory context budget ratio (0.01-0.5)"),
+  evidence_mode: z
+    .enum(EVIDENCE_MODES)
+    .optional()
+    .describe("Evidence-first rendering mode: auto, off, or force"),
+  retrieval_rounds: z
+    .number()
+    .int()
+    .min(1)
+    .max(3)
+    .optional()
+    .describe("Semantic retrieval cascade rounds (1-3)"),
+  compression_policy: z
+    .object({
+      id: z.string().optional(),
+      evidenceMinScore: z.number().optional(),
+      maxEvidenceSpans: z.number().int().optional(),
+      queryTermWeight: z.number().optional(),
+      tokenPenalty: z.number().optional(),
+      overBudgetPenalty: z.number().optional(),
+      labelWeights: z
+        .object({
+          fact: z.number().optional(),
+          decision: z.number().optional(),
+          constraint: z.number().optional(),
+          open_question: z.number().optional(),
+          failure_mode: z.number().optional(),
+        })
+        .optional(),
+    })
+    .optional()
+    .describe("Optional deterministic compression/evidence policy override"),
 });
 
 export type ContextInput = z.infer<typeof ContextSchema>;

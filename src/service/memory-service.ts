@@ -1,23 +1,25 @@
 import type { Database } from "bun:sqlite";
+
 import { v4 as uuidv4 } from "uuid";
 
-import type { MemoryItem, RememberInput, Visibility } from "../domain/schema";
-import { KIND_RISK_MAP } from "../domain/schema";
-import type { RiskLevel } from "../domain/schema";
+import { dedupCheckAndMerge } from "../application/dedup-use-cases";
 import { CONFIG } from "../config";
+import { withStructuredContextMetadata } from "../context/structured-memory";
+import type { MemoryItem, RememberInput, RiskLevel, Visibility } from "../domain/schema";
+import { KIND_RISK_MAP } from "../domain/schema";
 import { assertDirectWriteAllowed, guardString } from "../infrastructure/guardrail";
 import { withWriteTransaction } from "../persistence/db";
 import {
+  deleteMemoryItem,
   findMemoryByHash,
+  getMemoryById,
   insertMemoryItem,
   listMemoryItems as listMemories,
 } from "../persistence/repository";
-import { dedupCheckAndMerge } from "../application/dedup-use-cases";
 import { stampAgentProvenance } from "../retrieval/cross-agent";
 import { contentHash } from "../retrieval/dedup";
 import { serializeEmbedding } from "../retrieval/embedding";
 import { localEmbeddingProvider } from "../retrieval/embedding-provider";
-import { deleteMemoryItem, getMemoryById } from "../persistence/repository";
 import {
   audit,
   candidatesForProject,
@@ -120,10 +122,16 @@ function rememberOne(
     source: input.source ?? "cli:user",
     content_hash: hash,
     evidence_json: json(guardedPayload(input.evidence) ?? []),
-    metadata_json: json({
-      ...stampAgentProvenance(guardedPayload(input.metadata) ?? {}),
-      embedding_provider: input.embedding ? "explicit" : localEmbeddingProvider.name,
-    }),
+    metadata_json: json(
+      withStructuredContextMetadata({
+        metadata: {
+          ...stampAgentProvenance(guardedPayload(input.metadata) ?? {}),
+          embedding_provider: input.embedding ? "explicit" : localEmbeddingProvider.name,
+        },
+        text,
+        kind,
+      }),
+    ),
     embedding: serializeEmbedding(embedding),
     created_at: now(),
     updated_at: now(),

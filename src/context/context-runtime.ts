@@ -7,19 +7,26 @@ import { embedText } from "../retrieval/embedding-provider";
 import { vectorSearch } from "../retrieval/hybrid";
 import { getMemoriesForCode, listAll } from "../service";
 import type { DeferredDetail } from "./ccr";
+import { prepareChunkedDisclosure } from "./chunking";
 import type {
   ActiveDetail,
   MemoryDetailInput,
   MemoryLineageInput,
   PromptContextState,
+  SemanticMatch,
+  TaskContextType,
 } from "./compiler";
 import {
   STABLE_SUFFIX,
+  adaptiveBudget,
+  budgetRatioForTask,
+  classifyTaskContext,
   clearLayer3AtTurnEnd,
   compileDeferredSection,
   compileLayer1Index,
   compileLayer2Details,
   compileLayer3Lineage,
+  compileMemoryEvidence,
   compileStablePrefix,
   detectsOperationalContext,
   enforceContextBudget,
@@ -31,6 +38,20 @@ import {
   selectSemanticDetails,
   updatePrefixFingerprint,
 } from "./compiler";
+import type { CompressionPolicyInput } from "./compression-policy";
+import { resolveCompressionPolicy } from "./compression-policy";
+import { detectContentTypeForItem } from "./content-sniffers";
+import type { ContextAccuracySignals, EvidenceMode } from "./evidence";
+import { generateEvidenceSubqueries, queryTerms, selectMemoryEvidence } from "./evidence";
+
+const WORD_SPLIT_RE = /\s+/;
+const MAX_RETRIEVAL_ROUNDS = 3;
+const EVIDENCE_AUTO_TASKS = new Set<TaskContextType>([
+  "planning",
+  "debugging",
+  "code_review",
+  "refactoring",
+]);
 
 export interface RuntimeContextState {
   turn: number;
@@ -44,6 +65,11 @@ export interface AssembleContextInput {
   openPaths?: string[];
   includeLineageForIds?: string[];
   modelContextTokens?: number;
+  taskType?: TaskContextType;
+  memoryContextBudgetRatio?: number;
+  evidenceMode?: EvidenceMode;
+  retrievalRounds?: number;
+  compressionPolicy?: CompressionPolicyInput;
   state?: RuntimeContextState;
 }
 
@@ -64,10 +90,28 @@ export interface AssembledContext {
     fullCount: number;
     retrievableCount: number;
   };
+  /** Task type used for adaptive memory context budgeting */
+  taskType: TaskContextType;
+  /** Memory context budget ratio used for this turn */
+  budgetRatio: number;
+  /** Memory context budget in approximate tokens */
+  budgetTokens: number;
+  /** Estimated prompt tokens after compression/render preview */
+  estimatedPromptTokens: number;
   /** Whether the KV-cache prefix changed (CacheAligner) */
   prefixChanged: boolean;
   /** Number of pending proposals awaiting agent review */
   pendingProposalCount: number;
+  /** Number of compact evidence spans rendered into the prompt */
+  evidenceSpanCount: number;
+  /** Memory IDs represented by rendered evidence spans */
+  evidenceMemoryIds: string[];
+  /** Number of semantic retrieval rounds used */
+  retrievalRounds: number;
+  /** Compression/evidence policy ID used for this turn */
+  compressionPolicyId: string;
+  /** Runtime accuracy signals for eval/debugging */
+  contextAccuracySignals: ContextAccuracySignals;
 }
 
 export function createRuntimeContextState(): RuntimeContextState {
@@ -102,6 +146,149 @@ function detailSource(
     return "semantic";
   }
   return "manual";
+}
+
+function cloneDetailWithItem(detail: MemoryDetailInput, item: MemoryItem): MemoryDetailInput {
+  return {
+    ...detail,
+    item,
+    codeLinks: detail.codeLinks ? [...detail.codeLinks] : undefined,
+  };
+}
+
+function chunkableProseDetail(detail: MemoryDetailInput, query: string): boolean {
+  if (!query.trim()) {
+    return false;
+  }
+  if (detectContentTypeForItem(detail.item).type !== "prose") {
+    return false;
+  }
+  return (
+    detail.item.text.trim().split(WORD_SPLIT_RE).filter(Boolean).length >=
+    CONFIG.chunking.minWordsForChunking
+  );
+}
+
+function applyQueryAwareChunks(details: MemoryDetailInput[], query: string): MemoryDetailInput[] {
+  return details.map((detail) => {
+    if (!chunkableProseDetail(detail, query)) {
+      return detail;
+    }
+
+    const disclosure = prepareChunkedDisclosure(detail.item.id, detail.item.text, query);
+    if (!disclosure.chunked) {
+      return detail;
+    }
+
+    const totalChunks = disclosure.layer2Chunks.length + disclosure.layer3Chunks.length;
+    const chunkText = [
+      `[chunked memory: ${disclosure.layer2Chunks.length}/${totalChunks} relevant chunks selected; retrieve full text with memory_retrieve("${detail.item.id}")]`,
+      ...disclosure.layer2Chunks.map(
+        (chunk) =>
+          `[chunk ${chunk.index + 1}/${totalChunks} score=${chunk.score.toFixed(3)}]\n${chunk.text}`,
+      ),
+    ].join("\n\n");
+
+    return cloneDetailWithItem(detail, {
+      ...detail.item,
+      text: chunkText,
+    });
+  });
+}
+
+function normalizedEvidenceMode(value: EvidenceMode | undefined): EvidenceMode {
+  return value ?? "auto";
+}
+
+function evidenceEnabled(mode: EvidenceMode, taskType: TaskContextType): boolean {
+  if (mode === "force") {
+    return true;
+  }
+  if (mode === "off") {
+    return false;
+  }
+  return EVIDENCE_AUTO_TASKS.has(taskType);
+}
+
+function normalizedRetrievalRounds(
+  requested: number | undefined,
+  taskType: TaskContextType,
+  query: string,
+): number {
+  if (!query.trim()) {
+    return 1;
+  }
+  const fallback = EVIDENCE_AUTO_TASKS.has(taskType) ? 2 : 1;
+  const raw = requested ?? fallback;
+  if (!Number.isFinite(raw)) {
+    return fallback;
+  }
+  return Math.max(1, Math.min(MAX_RETRIEVAL_ROUNDS, Math.floor(raw)));
+}
+
+function mergeSemanticMatches(
+  existing: Map<string, SemanticMatch>,
+  matches: SemanticMatch[],
+): void {
+  for (const match of matches) {
+    const current = existing.get(match.item.id);
+    if (!current || match.similarity > current.similarity) {
+      existing.set(match.item.id, match);
+    }
+  }
+}
+
+function semanticMatchesForQuery(db: Database, projectId: string, query: string): SemanticMatch[] {
+  return vectorSearch(db, projectId, embedText(query), CONFIG.context.vectorSearchLimit).map(
+    (result) => ({
+      item: result.item,
+      similarity: result.similarity,
+    }),
+  );
+}
+
+function selectIterativeSemanticDetails(input: {
+  db: Database;
+  projectId: string;
+  query: string;
+  openPaths: string[];
+  retrievalRounds: number;
+  compressionPolicy: ReturnType<typeof resolveCompressionPolicy>;
+}): { details: MemoryDetailInput[]; roundsUsed: number; subqueries: string[] } {
+  if (!input.query.trim()) {
+    return { details: [], roundsUsed: 0, subqueries: [] };
+  }
+
+  const candidates = new Map<string, SemanticMatch>();
+  const firstRound = semanticMatchesForQuery(input.db, input.projectId, input.query);
+  mergeSemanticMatches(candidates, firstRound);
+  let roundsUsed = 1;
+  const subqueries: string[] = [];
+
+  if (input.retrievalRounds > 1 && firstRound.length > 0) {
+    const seedDetails = selectSemanticDetails(firstRound).length
+      ? selectSemanticDetails(firstRound)
+      : firstRound.slice(0, 3).map((match) => ({ item: match.item }));
+    subqueries.push(
+      ...generateEvidenceSubqueries({
+        query: input.query,
+        details: seedDetails,
+        openPaths: input.openPaths,
+        policy: input.compressionPolicy,
+      }),
+    );
+  }
+
+  for (const subquery of subqueries.slice(0, input.retrievalRounds - 1)) {
+    mergeSemanticMatches(candidates, semanticMatchesForQuery(input.db, input.projectId, subquery));
+    roundsUsed += 1;
+  }
+
+  return {
+    details: selectSemanticDetails([...candidates.values()]),
+    roundsUsed,
+    subqueries,
+  };
 }
 
 function lineageForIds(
@@ -142,6 +329,7 @@ function renderContextXml(
   const parts = [compileStablePrefix(projectId), state.layer1];
   // Pending proposals alert (tells agent to use memory_list_proposals)
   parts.push(`<pending_proposals count="${pendingProposalCount}" />`);
+  parts.push(compileMemoryEvidence(state.memoryEvidence));
   // Layer 2 always rendered (CacheAligner: stable structure)
   if (state.layer2Details.length > 0) {
     parts.push(compileLayer2Details(state.layer2Details));
@@ -171,8 +359,19 @@ export function assembleMemoryContext(input: AssembleContextInput): AssembledCon
   const turn = previous.turn + 1;
   const openPaths = new Set(input.openPaths ?? []);
   const query = input.query?.trim() ?? "";
+  const taskType = input.taskType ?? classifyTaskContext(query);
+  const budgetRatio = budgetRatioForTask(taskType, input.memoryContextBudgetRatio);
+  const budgetTokens = adaptiveBudget(modelContextTokens, taskType, input.memoryContextBudgetRatio);
+  const evidenceMode = normalizedEvidenceMode(input.evidenceMode);
+  const compressionPolicy = resolveCompressionPolicy(input.compressionPolicy);
+  const requestedRetrievalRounds = normalizedRetrievalRounds(
+    input.retrievalRounds,
+    taskType,
+    query,
+  );
 
   const allActiveMemories = listAll(input.db, input.projectId, undefined, "active");
+  const originalMemoryById = new Map(allActiveMemories.map((item) => [item.id, item]));
   const layer1 = compileLayer1Index(allActiveMemories, { projectId: input.projectId });
 
   // Fetch pending proposals count for agent review awareness
@@ -182,19 +381,15 @@ export function assembleMemoryContext(input: AssembleContextInput): AssembledCon
   const { kept, evicted } = evictLruDetails(previous.activeDetails, turn, openPaths);
   const keptDetails = kept.map((detail) => ({ item: detail.item }));
 
-  const semanticDetails = query
-    ? selectSemanticDetails(
-        vectorSearch(
-          input.db,
-          input.projectId,
-          embedText(query),
-          CONFIG.context.vectorSearchLimit,
-        ).map((result) => ({
-          item: result.item,
-          similarity: result.similarity,
-        })),
-      )
-    : [];
+  const semanticSelection = selectIterativeSemanticDetails({
+    db: input.db,
+    projectId: input.projectId,
+    query,
+    openPaths: input.openPaths ?? [],
+    retrievalRounds: requestedRetrievalRounds,
+    compressionPolicy,
+  });
+  const semanticDetails = semanticSelection.details;
 
   const codeDetails = (input.openPaths ?? []).flatMap((path) =>
     selectCodePathDetails(getMemoriesForCode(input.db, input.projectId, path)),
@@ -207,12 +402,16 @@ export function assembleMemoryContext(input: AssembleContextInput): AssembledCon
   const codePathIds = new Set(codeDetails.map((detail) => detail.item.id));
   const operationalIds = new Set(operationalDetails.map((detail) => detail.item.id));
 
-  const layer2Details = mergeDetails([
+  const mergedDetails = mergeDetails([
     ...keptDetails,
     ...semanticDetails,
     ...codeDetails,
     ...operationalDetails,
   ]);
+  const memoryEvidence = evidenceEnabled(evidenceMode, taskType)
+    ? selectMemoryEvidence(mergedDetails, query, compressionPolicy)
+    : [];
+  const layer2Details = applyQueryAwareChunks(mergedDetails, query);
   const layer3Lineages = lineageForIds(
     input.db,
     input.projectId,
@@ -223,11 +422,13 @@ export function assembleMemoryContext(input: AssembleContextInput): AssembledCon
   const budgeted = enforceContextBudget(
     {
       layer1,
+      memoryEvidence,
       layer2Details,
       layer3Lineages,
     },
     {
       modelContextTokens,
+      budgetTokens,
       allIndexMemories: allActiveMemories,
       projectId: input.projectId,
     },
@@ -235,7 +436,7 @@ export function assembleMemoryContext(input: AssembleContextInput): AssembledCon
 
   const selectedDetailIds = budgeted.state.layer2Details.map((detail) => detail.item.id);
   const activeDetails: ActiveDetail[] = budgeted.state.layer2Details.map((detail) => ({
-    item: detail.item,
+    item: originalMemoryById.get(detail.item.id) ?? detail.item,
     lastReferencedTurn:
       selectedDetailIds.includes(detail.item.id) &&
       (semanticIds.has(detail.item.id) ||
@@ -254,6 +455,7 @@ export function assembleMemoryContext(input: AssembleContextInput): AssembledCon
   const fingerprint = [
     input.projectId,
     String(allActiveMemories.length),
+    String(budgeted.state.memoryEvidence?.length ?? 0),
     String(budgeted.state.layer2Details.length),
     String(budgeted.state.layer3Lineages.length),
     budgeted.compactedIndex ? "compact" : "full",
@@ -270,6 +472,14 @@ export function assembleMemoryContext(input: AssembleContextInput): AssembledCon
   // Collect CCR stats
   const ccrStore = getCcrStore();
   const deferredDetails = [...ccrStore.deferred.values()];
+  const evidence = budgeted.state.memoryEvidence ?? [];
+  const contextAccuracySignals: ContextAccuracySignals = {
+    evidenceMode,
+    evidenceEnabled: evidenceEnabled(evidenceMode, taskType),
+    queryTerms: queryTerms(query),
+    retrievalSubqueries: semanticSelection.subqueries,
+    selectedEvidenceCount: evidence.length,
+  };
 
   return {
     xml,
@@ -293,6 +503,10 @@ export function assembleMemoryContext(input: AssembleContextInput): AssembledCon
     ],
     compactedIndex: budgeted.compactedIndex,
     overBudget: budgeted.overBudget,
+    taskType,
+    budgetRatio,
+    budgetTokens: budgeted.budgetTokens,
+    estimatedPromptTokens: budgeted.estimatedPromptTokens,
     deferredDetails,
     ccrStats: {
       totalTokensSaved: ccrStore.totalTokensSaved,
@@ -302,5 +516,10 @@ export function assembleMemoryContext(input: AssembleContextInput): AssembledCon
     },
     prefixChanged,
     pendingProposalCount,
+    evidenceSpanCount: evidence.length,
+    evidenceMemoryIds: [...new Set(evidence.map((span) => span.memoryId))],
+    retrievalRounds: semanticSelection.roundsUsed,
+    compressionPolicyId: compressionPolicy.id,
+    contextAccuracySignals,
   };
 }

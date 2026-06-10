@@ -17,14 +17,14 @@
 
 import type { MemoryItem } from "../domain/schema";
 import { guardXmlPayload } from "../infrastructure/guardrail";
+import { renderCode, renderConfig, renderDiff, renderJson, renderLog } from "./content-renderers";
 import type { MemoryContentType, RenderedContent } from "./content-sniffers";
 import { detectContentTypeForItem } from "./content-sniffers";
-import { renderCode, renderConfig, renderDiff, renderJson, renderLog } from "./content-renderers";
 
-// Re-export types and detection functions
-export type { MemoryContentType, ContentMatch, RenderedContent } from "./content-sniffers";
-export { detectContentType } from "./content-sniffers";
 export { renderCode, renderConfig, renderDiff, renderJson, renderLog } from "./content-renderers";
+// Re-export types and detection functions
+export type { ContentMatch, MemoryContentType, RenderedContent } from "./content-sniffers";
+export { detectContentType } from "./content-sniffers";
 
 // ─── Main render API ─────────────────────────────────────────────────
 
@@ -58,7 +58,7 @@ export function renderContentByType(
       result = renderLog(item.text);
       break;
     case "json":
-      result = renderJson(item.text);
+      result = renderJson(item.text, item.id);
       break;
     case "config":
       result = renderConfig(item.text);

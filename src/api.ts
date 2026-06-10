@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import { ZodError, z } from "zod";
 
 import { CONFIG } from "./config";
+import { TASK_CONTEXT_TYPES } from "./context/compiler";
 import { assembleMemoryContext } from "./context/context-runtime";
 import type {
   CodeEntityType,
@@ -72,6 +73,29 @@ const ContextAssembleSchema = ContextSchema.extend({
     .int()
     .min(CONFIG.context.minModelTokens)
     .max(CONFIG.context.maxModelTokens)
+    .optional(),
+  taskType: z.enum(TASK_CONTEXT_TYPES).optional(),
+  memoryContextBudgetRatio: z.number().min(0.01).max(0.5).optional(),
+  evidenceMode: z.enum(["auto", "off", "force"]).optional(),
+  retrievalRounds: z.number().int().min(1).max(3).optional(),
+  compressionPolicy: z
+    .object({
+      id: z.string().optional(),
+      evidenceMinScore: z.number().optional(),
+      maxEvidenceSpans: z.number().int().optional(),
+      queryTermWeight: z.number().optional(),
+      tokenPenalty: z.number().optional(),
+      overBudgetPenalty: z.number().optional(),
+      labelWeights: z
+        .object({
+          fact: z.number().optional(),
+          decision: z.number().optional(),
+          constraint: z.number().optional(),
+          open_question: z.number().optional(),
+          failure_mode: z.number().optional(),
+        })
+        .optional(),
+    })
     .optional(),
 });
 
@@ -401,6 +425,11 @@ export function createApi(input: { db: Database; projectId: string }): Hono {
       openPaths: body.openPaths ?? body.open_paths ?? [],
       includeLineageForIds: body.includeLineageForIds ?? body.include_lineage_for_ids ?? [],
       modelContextTokens: body.modelContextTokens ?? body.model_context_tokens,
+      taskType: body.taskType ?? body.task_type,
+      memoryContextBudgetRatio: body.memoryContextBudgetRatio ?? body.memory_context_budget_ratio,
+      evidenceMode: body.evidenceMode ?? body.evidence_mode,
+      retrievalRounds: body.retrievalRounds ?? body.retrieval_rounds,
+      compressionPolicy: body.compressionPolicy ?? body.compression_policy,
     });
 
     return c.json({
@@ -412,6 +441,15 @@ export function createApi(input: { db: Database; projectId: string }): Hono {
         evicted: assembled.evicted,
         compacted_index: assembled.compactedIndex,
         over_budget: assembled.overBudget,
+        task_type: assembled.taskType,
+        budget_ratio: assembled.budgetRatio,
+        budget_tokens: assembled.budgetTokens,
+        estimated_prompt_tokens: assembled.estimatedPromptTokens,
+        evidence_span_count: assembled.evidenceSpanCount,
+        evidence_memory_ids: assembled.evidenceMemoryIds,
+        retrieval_rounds: assembled.retrievalRounds,
+        compression_policy_id: assembled.compressionPolicyId,
+        context_accuracy_signals: assembled.contextAccuracySignals,
         state: {
           turn: assembled.state.turn,
           active_detail_ids: assembled.state.activeDetails.map((detail) => detail.item.id),

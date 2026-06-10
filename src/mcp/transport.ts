@@ -23,7 +23,10 @@
 import type { Database } from "bun:sqlite";
 
 import { CONFIG } from "../config";
+import type { TaskContextType } from "../context/compiler";
+import type { CompressionPolicyInput } from "../context/compression-policy";
 import { assembleMemoryContext } from "../context/context-runtime";
+import type { EvidenceMode } from "../context/evidence";
 import type {
   CodeEntityType,
   CodeLinkRelation,
@@ -178,6 +181,11 @@ async function handleContext(db: Database, projectId: string, params: Record<str
     openPaths: (params.open_paths as string[]) ?? [],
     includeLineageForIds: (params.include_lineage_for_ids as string[]) ?? [],
     modelContextTokens: (params.model_context_tokens as number) ?? 32_000,
+    taskType: params.task_type as TaskContextType | undefined,
+    memoryContextBudgetRatio: params.memory_context_budget_ratio as number | undefined,
+    evidenceMode: params.evidence_mode as EvidenceMode | undefined,
+    retrievalRounds: params.retrieval_rounds as number | undefined,
+    compressionPolicy: params.compression_policy as CompressionPolicyInput | undefined,
   });
   return { content: [{ type: "text", text: assembled.xml }] };
 }

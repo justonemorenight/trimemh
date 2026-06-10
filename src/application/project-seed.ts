@@ -1,9 +1,9 @@
 import type { Database } from "bun:sqlite";
 
-import type { IndexResult } from "./index-use-cases";
-import { detectProjectMetaForSeed } from "./index-use-cases";
 import type { MemoryItem } from "../domain/schema";
 import { remember } from "../service/memory-service";
+import type { IndexResult } from "./index-use-cases";
+import { detectProjectMetaForSeed } from "./index-use-cases";
 
 /**
  * Create initial project overview memories after a codebase scan.

@@ -1,0 +1,22 @@
+[
+  { "endpoint": "/api/users", "latency_ms": 120, "status": 200 },
+  { "endpoint": "/api/users", "latency_ms": 95, "status": 200 },
+  { "endpoint": "/api/posts", "latency_ms": 150, "status": 200 },
+  { "endpoint": "/api/posts", "latency_ms": 88, "status": 200 },
+  { "endpoint": "/api/users", "latency_ms": 200, "status": 200 },
+  { "endpoint": "/api/comments", "latency_ms": 75, "status": 200 },
+  { "endpoint": "/api/users", "latency_ms": 110, "status": 200 },
+  { "endpoint": "/api/posts", "latency_ms": 165, "status": 200 },
+  { "endpoint": "/api/comments", "latency_ms": 55, "status": 200 },
+  { "endpoint": "/api/users", "latency_ms": 130, "status": 200 },
+  { "endpoint": "/api/posts", "latency_ms": 15000, "status": 504 },
+  { "endpoint": "/api/users", "latency_ms": 92, "status": 200 },
+  { "endpoint": "/api/comments", "latency_ms": 68, "status": 200 },
+  { "endpoint": "/api/posts", "latency_ms": 180, "status": 200 },
+  { "endpoint": "/api/users", "latency_ms": 105, "status": 200 },
+  { "endpoint": "/api/comments", "latency_ms": 72, "status": 200 },
+  { "endpoint": "/api/users", "latency_ms": 145, "status": 200 },
+  { "endpoint": "/api/posts", "latency_ms": 210, "status": 200 },
+  { "endpoint": "/api/comments", "latency_ms": 60, "status": 200 },
+  { "endpoint": "/api/users", "latency_ms": 115, "status": 200 }
+]

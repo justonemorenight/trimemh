@@ -46,8 +46,8 @@ registerSessionCommand(program);
 registerReviewCommand(program);
 registerLifecycleCommand(program);
 
-import { listRulesTargets, writeAgentRulesForTargets } from "./mcp/rules-gen";
 import type { ConfigTarget } from "./mcp/config-gen";
+import { listRulesTargets, writeAgentRulesForTargets } from "./mcp/rules-gen";
 
 program
   .command("init")
@@ -100,9 +100,7 @@ program
       // No --rules flag: show available targets
       const targets = listRulesTargets();
       console.log("\n  agent rules:");
-      console.log(
-        "    To inject memory protocol rules for your AI agent, run:",
-      );
+      console.log("    To inject memory protocol rules for your AI agent, run:");
       console.log(
         "    trimemh init --rules <targets>   (e.g., trimemh init --rules claude-code,cursor)",
       );
@@ -179,7 +177,10 @@ program
         );
         process.exit(1);
       }
-      const result = installForAgent(memhConfig, found, { withHooks: opts.withHooks, noRules: opts.noRules });
+      const result = installForAgent(memhConfig, found, {
+        withHooks: opts.withHooks,
+        noRules: opts.noRules,
+      });
       printInstallResults([result]);
       if (result.success) {
         printPostInstall([found.agent]);
@@ -194,7 +195,10 @@ program
         return;
       }
       const results = toInstall.map((d) =>
-        installForAgent(memhConfig, d, { withHooks: opts.withHooks && d.agent.supportsHooks, noRules: opts.noRules }),
+        installForAgent(memhConfig, d, {
+          withHooks: opts.withHooks && d.agent.supportsHooks,
+          noRules: opts.noRules,
+        }),
       );
       printInstallResults(results);
       const succeeded = results.filter((r) => r.success).map((r) => r.agent);
@@ -219,7 +223,10 @@ program
           return;
         }
         console.log(`\n  Auto-installing for ${agent.agent.icon} ${agent.agent.name}...\n`);
-        const result = installForAgent(memhConfig, agent, { withHooks: opts.withHooks, noRules: opts.noRules });
+        const result = installForAgent(memhConfig, agent, {
+          withHooks: opts.withHooks,
+          noRules: opts.noRules,
+        });
         printInstallResults([result]);
         if (result.success) {
           printPostInstall([agent.agent]);

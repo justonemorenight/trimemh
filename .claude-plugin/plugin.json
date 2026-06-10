@@ -1,0 +1,18 @@
+{
+  "name": "trimemh",
+  "version": "0.1.0",
+  "description": "Local-first, governance-first agent memory workflows. Recall, capture, handoff, review, and learn from project memory.",
+  "skills": "./skills",
+  "commands": "./.claude/commands",
+  "homepage": "https://github.com/justonemorenight/trimemh",
+  "author": "Just One More Night",
+  "license": "MIT",
+  "tags": [
+    "memory",
+    "agent-memory",
+    "context-compression",
+    "governance",
+    "local-first",
+    "mcp"
+  ]
+}

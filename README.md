@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/bun-%3E%3D1.0.0-f9f1e4?logo=bun&logoColor=white" alt="Bun">
-  <img src="https://img.shields.io/badge/tests-349%20pass-success" alt="Tests">
+  <img src="https://img.shields.io/badge/tests-446%20pass-success" alt="Tests">
   <img src="https://img.shields.io/badge/compression-93%25-brightgreen" alt="Compression">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License">
   <img src="https://img.shields.io/badge/local--first-100%25-orange" alt="Local-first">
@@ -64,7 +64,7 @@ Agent query
   │   code · log · json · config · diff · prose
   │
   ├─ 2. Type-specific compression
-  │   Code → TypeScript AST (tree-sitter): signatures only, bodies deferred
+  │   Code → TypeScript compiler API AST: signatures only, bodies deferred
   │   Logs → Variable normalization + pattern grouping + dedup
   │   JSON → Schema-only: keys & types, values stripped
   │   Config → Key names only
@@ -80,6 +80,10 @@ Agent query
       Originals stored locally. Agent can fetch full text on demand
       via memory_retrieve("trimemh:<id>").
 ```
+
+### Accuracy-First Context Assembly
+
+When the runtime assembles prompt context, it uses task-aware budgets, evidence-first ordering, and query-aware chunking for long prose memories. The goal is to keep the highest-signal spans visible under tight budgets while preserving full originals behind `memory_retrieve`.
 
 ### Memory Lifecycle
 
@@ -209,6 +213,7 @@ trimemh hooks capture --event stop --agent codex < hook.json
 
 # ── Memory v2 Workflows ────────────────────
 trimemh eval retrieval --dataset example/retrieval-eval.dataset.json --format markdown
+trimemh eval context --dataset example/context-accuracy.dataset.json --budgets 4000,8000,32000
 trimemh session summarize --agent codex --session-id abc --summary "Finished adapter work"
 trimemh session history --agent claude-code
 trimemh session registry --agent codex
@@ -343,13 +348,13 @@ src/
 │
 ├── context/             Compression pipeline (ContentRouter → CCR → CacheAligner)
 │   ├── ccr.ts              Reversible Context Compression (3-level)
-│   ├── code-compressor.ts  TypeScript AST compressor (tree-sitter)
+│   ├── code-compressor.ts  TypeScript AST compressor (compiler API)
 │   ├── compiler.ts         CacheAligner stable prefix + smart rendering
 │   ├── content-router.ts   6-type content detection orchestrator
 │   ├── content-sniffers.ts Per-type content detectors
 │   ├── content-renderers.ts Per-type compressed renderers
 │   ├── context-runtime.ts  Turn-based context assembly
-│   └── chunking.ts         AST-aware text chunking
+│   └── chunking.ts         Query-aware text chunking
 │
 ├── retrieval/           Search, scoring & embeddings
 │   ├── embedding-provider.ts LocalHash (zero-dep) + ONNX MiniLM
@@ -459,6 +464,7 @@ triMemh stores its database at `.trimemh/memory.db` in your project root. Config
 |---|---|---|
 | **Local-first memory** | SQLite + sqlite-vec on your machine | No API keys, no cloud dependency |
 | **Context compression** | ContentRouter + CCR + CacheAligner | 93% token reduction across benchmark scenarios |
+| **Context accuracy under budget** | Evidence-first XML + adaptive retrieval + query-aware chunking | Better recall when the window is tight |
 | **Fast context assembly** | Builds memory context before each LLM turn | 348μs–1.6ms p50 across 50–1,000 memories |
 | **Hybrid retrieval** | FTS5 + vector search with RRF fusion | 13.1ms p50 in 500-memory real-world benchmark |
 | **Governance** | RBAC, risk checks, proposal approval, audit trail | High/critical writes require explicit approval |
@@ -475,10 +481,11 @@ triMemh stores its database at `.trimemh/memory.db` in your project root. Config
 git clone https://github.com/justonemorenight/trimemh.git
 cd tri-memory
 bun install
-bun test                  # 349 tests, 0 failures
+bun test                  # 446 tests, 0 failures
 bun run scripts/benchmark.ts        # Token compression benchmark
 bun run scripts/bench-realworld.ts  # Latency & throughput benchmark
 bun run scripts/bench-retrieval.ts  # Retrieval quality benchmark
+bun run scripts/tune-context-policy.ts --dataset example/context-accuracy.dataset.json --budgets 4000,8000,32000
 ```
 
 ## Roadmap
@@ -486,7 +493,7 @@ bun run scripts/bench-retrieval.ts  # Retrieval quality benchmark
 - [x] ContentRouter — 6-type content detection
 - [x] CCR — 3-level reversible compression
 - [x] CacheAligner — stable KV-cache prefix
-- [x] AST code compressor — TypeScript tree-sitter
+- [x] AST code compressor — TypeScript compiler API
 - [x] Log pattern dedup — variable normalization
 - [x] Query expansion — 60+ synonym pairs
 - [x] Reranker — cross-encoder fallback

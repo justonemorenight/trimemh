@@ -3,15 +3,13 @@ import type { Database } from "bun:sqlite";
 import type { MemoryItem, MemoryProposal } from "../domain/schema";
 import { getMemoryById, getProposalById, listPendingProposals } from "../persistence/repository";
 
+const FULL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function isFullUuid(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+  return FULL_UUID_RE.test(value);
 }
 
-function matchByPrefix<T extends { id: string }>(
-  items: T[],
-  prefix: string,
-  label: string,
-): T {
+function matchByPrefix<T extends { id: string }>(items: T[], prefix: string, label: string): T {
   if (isFullUuid(prefix)) {
     const exact = items.find((item) => item.id === prefix);
     if (exact) {
@@ -21,7 +19,10 @@ function matchByPrefix<T extends { id: string }>(
 
   const matched = items.filter((item) => item.id.startsWith(prefix));
   if (matched.length === 1) {
-    return matched[0]!;
+    const item = matched[0];
+    if (item) {
+      return item;
+    }
   }
   if (matched.length > 1) {
     throw new Error(
@@ -32,11 +33,7 @@ function matchByPrefix<T extends { id: string }>(
   throw new Error(`${label} "${prefix}" not found.`);
 }
 
-export function resolveMemoryId(
-  db: Database,
-  projectId: string,
-  idOrPrefix: string,
-): MemoryItem {
+export function resolveMemoryId(db: Database, projectId: string, idOrPrefix: string): MemoryItem {
   const exact = getMemoryById(db, idOrPrefix);
   if (exact && exact.project_id === projectId) {
     return exact;
@@ -67,11 +64,12 @@ export function resolveProposalId(
     return exact;
   }
 
-  const pending = listPendingProposals(db, projectId).filter((p) =>
-    p.id.startsWith(idOrPrefix),
-  );
+  const pending = listPendingProposals(db, projectId).filter((p) => p.id.startsWith(idOrPrefix));
   if (pending.length === 1) {
-    return pending[0]!;
+    const proposal = pending[0];
+    if (proposal) {
+      return proposal;
+    }
   }
   if (pending.length > 1) {
     throw new Error(

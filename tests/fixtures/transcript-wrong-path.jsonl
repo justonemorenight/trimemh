@@ -1,0 +1,4 @@
+{"type":"tool_use","name":"read_file","input":{"path":"src/utils.ts"}}
+{"type":"tool_result","is_error":true,"content":"Error: ENOENT: no such file or directory, open 'src/utils.ts'"}
+{"type":"tool_use","name":"read_file","input":{"path":"src/lib/utils.ts"}}
+{"type":"tool_result","is_error":false,"content":"export function formatDate(date: Date): string { ... }"}

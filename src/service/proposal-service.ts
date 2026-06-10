@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite";
 import { v4 as uuidv4 } from "uuid";
 
 import { CONFIG } from "../config";
+import { withStructuredContextMetadata } from "../context/structured-memory";
 import type {
   AuditEvent,
   MemoryItem,
@@ -21,7 +22,6 @@ import {
   getAuditEvents,
   getMemoryById,
   getMemoryStats,
-  getProposalById,
   insertMemoryItem,
   insertProposal,
   listPendingProposals,
@@ -35,6 +35,15 @@ import { localEmbeddingProvider } from "../retrieval/embedding-provider";
 import { audit, embeddingForText, guardedPayload, json, now } from "./helpers";
 import { resolveProposalId } from "./id-resolution";
 import { recordLifecycleEvent } from "./lifecycle-service";
+
+function parseMetadataJson(metadataJson: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(metadataJson || "{}");
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
 
 // ─── Propose (from agent/MCP/reflect) ─────────────────────────────
 
@@ -191,10 +200,16 @@ export function approve(
       source: `mcp:${proposal.proposed_by}`,
       content_hash: hash,
       evidence_json: proposal.evidence_json,
-      metadata_json: json({
-        approved_from_proposal: proposal.id,
-        embedding_provider: localEmbeddingProvider.name,
-      }),
+      metadata_json: json(
+        withStructuredContextMetadata({
+          metadata: {
+            approved_from_proposal: proposal.id,
+            embedding_provider: localEmbeddingProvider.name,
+          },
+          text: proposal.proposed_text,
+          kind: proposal.proposed_kind,
+        }),
+      ),
       embedding: serializeEmbedding(embeddingForText(proposal.proposed_text)),
       created_at: now(),
       updated_at: now(),
@@ -227,11 +242,18 @@ export function approve(
     existing.updated_at = now();
     existing.content_hash = contentHash(proposal.proposed_text);
     existing.embedding = serializeEmbedding(embeddingForText(proposal.proposed_text));
-    existing.metadata_json = json({
-      ...JSON.parse(existing.metadata_json || "{}"),
-      updated_from_proposal: proposalId,
-      embedding_provider: localEmbeddingProvider.name,
-    });
+    existing.metadata_json = json(
+      withStructuredContextMetadata({
+        metadataJson: existing.metadata_json,
+        metadata: {
+          ...parseMetadataJson(existing.metadata_json),
+          updated_from_proposal: proposalId,
+          embedding_provider: localEmbeddingProvider.name,
+        },
+        text: proposal.proposed_text,
+        kind: proposal.proposed_kind,
+      }),
+    );
 
     // FTS5 sync handled by trigger
     const updated = updateMemoryItem(db, existing);

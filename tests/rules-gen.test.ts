@@ -1,7 +1,6 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 
 import type { ConfigTarget } from "../src/mcp/config-gen";
 import {
@@ -90,7 +89,11 @@ describe("generateRuleContent", () => {
 
 describe("hasExistingRules", () => {
   it("returns true when markers are present", () => {
-    expect(hasExistingRules("before\n<!-- trimemh:rules:start -->\nrules\n<!-- trimemh:rules:end -->\nafter")).toBe(true);
+    expect(
+      hasExistingRules(
+        "before\n<!-- trimemh:rules:start -->\nrules\n<!-- trimemh:rules:end -->\nafter",
+      ),
+    ).toBe(true);
   });
 
   it("returns false when no markers", () => {
@@ -104,7 +107,8 @@ describe("hasExistingRules", () => {
 
 describe("stripExistingRules", () => {
   it("removes rules block between markers", () => {
-    const input = "before\n\n<!-- trimemh:rules:start -->\nold rules\n<!-- trimemh:rules:end -->\n\nafter";
+    const input =
+      "before\n\n<!-- trimemh:rules:start -->\nold rules\n<!-- trimemh:rules:end -->\n\nafter";
     const result = stripExistingRules(input);
     expect(result).not.toContain("old rules");
     expect(result).not.toContain("trimemh:rules:start");
@@ -260,9 +264,7 @@ describe("getRulesFilePath", () => {
     expect(getRulesFilePath("copilot-cli", TEST_DIR)).toBe(
       join(TEST_DIR, ".github", "copilot-instructions.md"),
     );
-    expect(getRulesFilePath("aider", TEST_DIR)).toBe(
-      join(TEST_DIR, ".aider", "conventions.md"),
-    );
+    expect(getRulesFilePath("aider", TEST_DIR)).toBe(join(TEST_DIR, ".aider", "conventions.md"));
     expect(getRulesFilePath("generic", TEST_DIR)).toBe(
       join(TEST_DIR, ".trimemh", "AGENT_RULES.md"),
     );

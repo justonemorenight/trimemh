@@ -1,0 +1,4 @@
+{"type":"tool_use","name":"grep_search","input":{"query":"calculateTotalPriceWithDiscount","path":"src/"}}
+{"type":"tool_result","is_error":true,"content":"No matches found"}
+{"type":"tool_use","name":"grep_search","input":{"query":"calculateTotal","path":"src/"}}
+{"type":"tool_result","is_error":false,"content":"src/pricing.ts:15: export function calculateTotal(items: Item[]): number"}

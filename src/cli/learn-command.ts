@@ -41,6 +41,7 @@ export function registerLearnCommand(program: Command): void {
 
         console.log("[triMemh] Session analysis complete:");
         console.log(`  Failures detected: ${result.failuresDetected}`);
+        console.log(`  Recovery pairs: ${result.recoveryPairsDetected}`);
         console.log(`  Corrections proposed: ${result.correctionsProposed}`);
 
         for (const correction of result.corrections) {
@@ -48,6 +49,12 @@ export function registerLearnCommand(program: Command): void {
             `\n  [${correction.risk.toUpperCase()}] ${correction.action}: ${correction.proposedText.slice(0, 100)}...`,
           );
           console.log(`    Rationale: ${correction.rationale}`);
+          if (
+            correction.evidence.includes("Failed:") &&
+            correction.evidence.includes("Recovered:")
+          ) {
+            console.log(`    Pattern: recovery (failed → successful action)`);
+          }
         }
 
         if (opts.dryRun) {

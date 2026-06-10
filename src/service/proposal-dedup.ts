@@ -1,19 +1,20 @@
 import type { Database } from "bun:sqlite";
 
 import type { MemoryKind, MemoryProposal } from "../domain/schema";
+import { updateProposal } from "../persistence/proposal-repo";
 import { listPendingProposals } from "../persistence/repository";
 import { normalizeText } from "../retrieval/dedup";
-import { updateProposal } from "../persistence/proposal-repo";
 import { now } from "./helpers";
 
 const STALE_DAYS = 7;
 const MERGE_KINDS = new Set<MemoryKind>(["session_summary", "tooling", "fact"]);
+const TOKEN_SPLIT_RE = /[^a-z0-9]+/i;
 
 function tokenSet(text: string): Set<string> {
   return new Set(
     normalizeText(text)
       .toLowerCase()
-      .split(/[^a-z0-9]+/i)
+      .split(TOKEN_SPLIT_RE)
       .filter((token) => token.length > 2),
   );
 }
@@ -88,7 +89,10 @@ export function staleProposalIds(proposals: MemoryProposal[]): Set<string> {
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
     );
     for (let i = 1; i < sorted.length; i++) {
-      const proposal = sorted[i]!;
+      const proposal = sorted[i];
+      if (!proposal) {
+        continue;
+      }
       const age = nowMs - new Date(proposal.created_at).getTime();
       if (age >= staleMs) {
         stale.add(proposal.id);
@@ -122,7 +126,9 @@ export function formatProposalBatchHints(proposals: MemoryProposal[]): string[] 
 
   const stale = staleProposalIds(proposals);
   if (stale.size > 0) {
-    lines.push(`Stale candidates (${STALE_DAYS}+ days, superseded by newer pending): ${stale.size}`);
+    lines.push(
+      `Stale candidates (${STALE_DAYS}+ days, superseded by newer pending): ${stale.size}`,
+    );
   }
 
   return lines;

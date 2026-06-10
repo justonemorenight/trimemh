@@ -181,6 +181,10 @@ const GENERIC_PATTERNS = [
   /codebase scan completed/i,
   /detected tech stack/i,
 ];
+const PATH_LIKE_QUERY_RE = /[/\\]/;
+const TASK_SPECIFIC_QUERY_RE =
+  /\b(implement|fix|refactor|add|remove|update|migrate|debug|setup|configure)\b/i;
+const WORD_SPLIT_RE = /\s+/;
 
 function isTaskSpecificQuery(query?: string): boolean {
   if (!query) {
@@ -190,12 +194,10 @@ function isTaskSpecificQuery(query?: string): boolean {
   if (trimmed.length < 24) {
     return false;
   }
-  if (/[/\\]/.test(trimmed)) {
+  if (PATH_LIKE_QUERY_RE.test(trimmed)) {
     return true;
   }
-  return /\b(implement|fix|refactor|add|remove|update|migrate|debug|setup|configure)\b/i.test(
-    trimmed,
-  );
+  return TASK_SPECIFIC_QUERY_RE.test(trimmed);
 }
 
 function memorySpecificityScore(item: MemoryItem): number {
@@ -208,7 +210,7 @@ function memorySpecificityScore(item: MemoryItem): number {
     /* ignore */
   }
 
-  const words = item.text.trim().split(/\s+/).length;
+  const words = item.text.trim().split(WORD_SPLIT_RE).length;
   if (words <= 18) {
     return 0.35;
   }

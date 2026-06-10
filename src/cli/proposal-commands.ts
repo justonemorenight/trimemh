@@ -15,21 +15,26 @@ export function registerProposalCommands(program: Command): void {
     .option("--by <source>", "Who proposed this", "cli:user")
     .option("--rationale <text>", "Why this memory should exist")
     .option("--db <path>", "Custom database path")
+    .option("--json", "Output JSON for editor integrations")
     .action(
       withDb((db, config, opts) => {
-        const p = propose(db, {
+        const proposal = propose(db, {
           kind: opts.kind as MemoryKind,
           text: opts.text,
           projectId: config.projectId,
           proposedBy: opts.by,
           rationale: opts.rationale,
         });
-        console.log(`[triMemh] Proposal created: ${p.id}`);
-        console.log(`  kind: ${p.proposed_kind}`);
-        console.log(`  risk: ${p.risk_level}`);
-        console.log(`  status: ${p.status}`);
+        if (opts.json) {
+          console.log(JSON.stringify({ success: true, data: proposal }, null, 2));
+          return;
+        }
+        console.log(`[triMemh] Proposal created: ${proposal.id}`);
+        console.log(`  kind: ${proposal.proposed_kind}`);
+        console.log(`  risk: ${proposal.risk_level}`);
+        console.log(`  status: ${proposal.status}`);
         console.log(
-          `  Use "trimemh approve ${p.id.slice(0, 8)}" to accept or "trimemh reject ${p.id.slice(0, 8)}" to decline.`,
+          `  Use "trimemh approve ${proposal.id.slice(0, 8)}" to accept or "trimemh reject ${proposal.id.slice(0, 8)}" to decline.`,
         );
       }),
     );
@@ -41,9 +46,14 @@ export function registerProposalCommands(program: Command): void {
     .description("Approve a pending proposal")
     .argument("<proposal-id>", "Proposal ID (or prefix)")
     .option("--db <path>", "Custom database path")
+    .option("--json", "Output JSON for editor integrations")
     .action(
-      withDb((db, config, proposalId, _opts) => {
+      withDb((db, config, proposalId, opts) => {
         const item = approve(db, config.projectId, proposalId, "user");
+        if (opts.json) {
+          console.log(JSON.stringify({ success: true, data: { memory: item } }, null, 2));
+          return;
+        }
         if (item) {
           console.log(`[triMemh] Approved and created memory: ${item.id}`);
           console.log(`  kind: ${item.kind}`);
@@ -61,11 +71,16 @@ export function registerProposalCommands(program: Command): void {
     .argument("<proposal-id>", "Proposal ID (or prefix)")
     .option("--note <text>", "Reason for rejection", "Rejected by user")
     .option("--db <path>", "Custom database path")
+    .option("--json", "Output JSON for editor integrations")
     .action(
       withDb((db, config, proposalId, opts) => {
-        const p = reject(db, config.projectId, proposalId, opts.note, "user");
-        console.log(`[triMemh] Rejected: ${p.id}`);
-        console.log(`  note: ${p.decision_note}`);
+        const proposal = reject(db, config.projectId, proposalId, opts.note, "user");
+        if (opts.json) {
+          console.log(JSON.stringify({ success: true, data: proposal }, null, 2));
+          return;
+        }
+        console.log(`[triMemh] Rejected: ${proposal.id}`);
+        console.log(`  note: ${proposal.decision_note}`);
       }),
     );
 
@@ -75,10 +90,28 @@ export function registerProposalCommands(program: Command): void {
     .command("status")
     .description("Show memory statistics and pending proposals")
     .option("--db <path>", "Custom database path")
+    .option("--json", "Output JSON for editor integrations")
     .action(
       withDb((db, config, opts) => {
         const s = status(db, config.projectId);
         const dbPath = opts.db ?? config.dbPath;
+        if (opts.json) {
+          console.log(
+            JSON.stringify(
+              {
+                success: true,
+                data: {
+                  project_id: config.projectId,
+                  db_path: dbPath,
+                  ...s,
+                },
+              },
+              null,
+              2,
+            ),
+          );
+          return;
+        }
         console.log(`[triMemh] Project: ${config.projectId}`);
         console.log(`[triMemh] DB path: ${dbPath}`);
         console.log();
@@ -91,19 +124,19 @@ export function registerProposalCommands(program: Command): void {
         if (s.pendingProposals.length > 0) {
           console.log();
           console.log("── Pending Proposals ──");
-          for (const p of s.pendingProposals) {
-            const preview = p.proposed_text.replace(/\n/g, " ").slice(0, 80);
+          for (const proposal of s.pendingProposals) {
+            const preview = proposal.proposed_text.replace(/\n/g, " ").slice(0, 80);
             console.log(
-              `  ${p.id.slice(0, 8)} | ${p.risk_level.padEnd(8)} | ${p.proposed_kind.padEnd(16)} | ${preview}…`,
+              `  ${proposal.id.slice(0, 8)} | ${proposal.risk_level.padEnd(8)} | ${proposal.proposed_kind.padEnd(16)} | ${preview}…`,
             );
           }
         }
 
         console.log();
         console.log("── Recent Audit (last 5) ──");
-        for (const e of s.recentAudit.slice(0, 5)) {
+        for (const auditEvent of s.recentAudit.slice(0, 5)) {
           console.log(
-            `  ${e.created_at.slice(0, 19)} | ${e.event_type.padEnd(18)} | ${e.entity_type}:${e.entity_id.slice(0, 8)}`,
+            `  ${auditEvent.created_at.slice(0, 19)} | ${auditEvent.event_type.padEnd(18)} | ${auditEvent.entity_type}:${auditEvent.entity_id.slice(0, 8)}`,
           );
         }
       }),

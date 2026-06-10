@@ -18,21 +18,18 @@ import type {
   SuggestedCodeLink,
 } from "../domain/schema";
 import { KIND_RISK_MAP } from "../domain/schema";
-import { getMemoryStats, getRelatedMemoryRows } from "../persistence/repository";
 import { getActiveMemoryCountsByProject } from "../persistence/proposal-repo";
+import { getMemoryStats, getRelatedMemoryRows } from "../persistence/repository";
 import { shouldAutoApproveLink, shouldAutoApproveMemory } from "./auto-approval";
 import { suggestCodeLinksFromText } from "./code-link-suggest";
-import { resolveMemoryId } from "./id-resolution";
-import {
-  findSimilarPendingProposal,
-  mergePendingProposal,
-} from "./proposal-dedup";
 import {
   approveMemoryLinkProposal,
   getRelatedMemories,
   proposeMemoryCodeLink,
   proposeMemoryEdge,
 } from "./graph-service";
+import { resolveMemoryId } from "./id-resolution";
+import { findSimilarPendingProposal, mergePendingProposal } from "./proposal-dedup";
 import { approve, propose } from "./proposal-service";
 
 // ─── MCP-facing service calls ──────────────────────────────────────
@@ -335,8 +332,7 @@ export function formatProposalResultExtras(result: McpProposalResult): string[] 
   if (result.suggested_code_links?.length) {
     lines.push(
       ...result.suggested_code_links.map(
-        (link: SuggestedCodeLink) =>
-          `suggested_code_link: ${link.path} (${link.relation})`,
+        (link: SuggestedCodeLink) => `suggested_code_link: ${link.path} (${link.relation})`,
       ),
     );
   }

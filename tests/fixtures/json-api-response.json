@@ -1,0 +1,107 @@
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Alice Johnson",
+      "email": "alice@example.com",
+      "role": "admin",
+      "active": true
+    },
+    { "id": 2, "name": "Bob Smith", "email": "bob@example.com", "role": "user", "active": true },
+    {
+      "id": 3,
+      "name": "Charlie Brown",
+      "email": "charlie@example.com",
+      "role": "user",
+      "active": true
+    },
+    {
+      "id": 4,
+      "name": "Diana Prince",
+      "email": "diana@example.com",
+      "role": "user",
+      "active": false
+    },
+    {
+      "id": 5,
+      "name": "Eve Wilson",
+      "email": "eve@example.com",
+      "role": "moderator",
+      "active": true
+    },
+    {
+      "id": 6,
+      "name": "Frank Castle",
+      "email": "frank@example.com",
+      "role": "user",
+      "active": true
+    },
+    {
+      "id": 7,
+      "name": "Grace Hopper",
+      "email": "grace@example.com",
+      "role": "admin",
+      "active": true
+    },
+    { "id": 8, "name": "Henry Ford", "email": "henry@example.com", "role": "user", "active": true },
+    { "id": 9, "name": "Iris West", "email": "iris@example.com", "role": "user", "active": true },
+    { "id": 10, "name": "Jack Ryan", "email": "jack@example.com", "role": "user", "active": false },
+    {
+      "id": 11,
+      "name": "Karen Page",
+      "email": "karen@example.com",
+      "role": "user",
+      "active": true
+    },
+    { "id": 12, "name": "Leo Messi", "email": "leo@example.com", "role": "user", "active": true },
+    {
+      "id": 13,
+      "name": "Mia Wong",
+      "email": "mia@example.com",
+      "role": "moderator",
+      "active": true
+    },
+    { "id": 14, "name": "Nick Fury", "email": "nick@example.com", "role": "admin", "active": true },
+    {
+      "id": 15,
+      "name": "Olivia Pope",
+      "email": "olivia@example.com",
+      "role": "user",
+      "active": true
+    },
+    {
+      "id": 16,
+      "name": "Peter Parker",
+      "email": "peter@example.com",
+      "role": "user",
+      "active": true
+    },
+    {
+      "id": 17,
+      "name": "Quinn Hughes",
+      "email": "quinn@example.com",
+      "role": "user",
+      "active": true
+    },
+    {
+      "id": 18,
+      "name": "Rachel Green",
+      "email": "rachel@example.com",
+      "role": "user",
+      "active": true
+    },
+    {
+      "id": 19,
+      "name": "Steve Rogers",
+      "email": "steve@example.com",
+      "role": "user",
+      "active": false
+    },
+    { "id": 20, "name": "Tina Turner", "email": "tina@example.com", "role": "user", "active": true }
+  ],
+  "pagination": {
+    "page": 1,
+    "total": 100,
+    "per_page": 20
+  }
+}

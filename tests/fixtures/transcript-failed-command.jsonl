@@ -1,0 +1,4 @@
+{"type":"tool_use","name":"Bash","input":{"command":"bun test --coverage"}}
+{"type":"tool_result","is_error":true,"content":"error: Coverage plugin not available"}
+{"type":"tool_use","name":"Bash","input":{"command":"bun test"}}
+{"type":"tool_result","is_error":false,"content":"3 pass, 0 fail"}

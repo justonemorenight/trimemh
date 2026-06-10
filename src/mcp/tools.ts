@@ -12,7 +12,7 @@ import type {
   RiskLevel,
 } from "../domain/schema";
 import { CODE_LINK_RELATIONS, KIND_RISK_MAP, MEMORY_EDGE_RELATIONS } from "../domain/schema";
-import { formatConfigDebugLines, type ResolvedTriMemhConfig } from "../infrastructure/config";
+import { type ResolvedTriMemhConfig, formatConfigDebugLines } from "../infrastructure/config";
 import { capSearchLimit, guardOutput, guardedArgumentsHash } from "../infrastructure/guardrail";
 import type { RateLimiter } from "../infrastructure/rate-limit";
 import { embedText } from "../retrieval/embedding-provider";
@@ -37,10 +37,7 @@ import {
   reject,
 } from "../service";
 import { formatIdLine } from "../service/id-resolution";
-import {
-  formatProposalBatchHints,
-  staleProposalIds,
-} from "../service/proposal-dedup";
+import { formatProposalBatchHints, staleProposalIds } from "../service/proposal-dedup";
 import { checkRateLimit } from "./runtime";
 import {
   ApproveSchema,
@@ -191,6 +188,11 @@ export function registerMemoryTools(
           openPaths: params.open_paths,
           includeLineageForIds: params.include_lineage_for_ids,
           modelContextTokens: params.model_context_tokens,
+          taskType: params.task_type,
+          memoryContextBudgetRatio: params.memory_context_budget_ratio,
+          evidenceMode: params.evidence_mode,
+          retrievalRounds: params.retrieval_rounds,
+          compressionPolicy: params.compression_policy,
         });
 
         const metadata = [
@@ -199,6 +201,14 @@ export function registerMemoryTools(
           `lineage_ids=${assembled.lineageIds.join(",") || "none"}`,
           `compacted_index=${assembled.compactedIndex}`,
           `over_budget=${assembled.overBudget}`,
+          `task_type=${assembled.taskType}`,
+          `budget_ratio=${assembled.budgetRatio}`,
+          `budget_tokens=${assembled.budgetTokens}`,
+          `estimated_prompt_tokens=${assembled.estimatedPromptTokens}`,
+          `evidence_span_count=${assembled.evidenceSpanCount}`,
+          `evidence_memory_ids=${assembled.evidenceMemoryIds.join(",") || "none"}`,
+          `retrieval_rounds=${assembled.retrievalRounds}`,
+          `compression_policy_id=${assembled.compressionPolicyId}`,
           `ccr_compressed=${assembled.ccrStats.compressedCount}`,
           `ccr_full=${assembled.ccrStats.fullCount}`,
           `ccr_tokens_saved=${assembled.ccrStats.totalTokensSaved}`,

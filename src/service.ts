@@ -49,6 +49,8 @@ export {
 } from "./service/lifecycle-service";
 // MCP-facing calls
 export {
+  formatProjectMismatchWarnings,
+  formatProposalResultExtras,
   mcpCodeSearch,
   mcpGet,
   mcpHybridSearch,
@@ -59,8 +61,6 @@ export {
   mcpRetrieveFull,
   mcpSearch,
   mcpStats,
-  formatProjectMismatchWarnings,
-  formatProposalResultExtras,
 } from "./service/mcp-service";
 // Normalized lifecycle event adapters
 export {

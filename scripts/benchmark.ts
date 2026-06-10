@@ -782,7 +782,7 @@ function printComparison(results: ScenarioResult[]): void {
     if (Math.abs(delta) <= 8) {
       deltaStr = `${G}≈ parity (±8%)${N}`;
     } else if (delta > 0) {
-      deltaStr = `${G}+${delta}% better${N}`;
+      deltaStr = `${G}+${delta.toFixed(0)}% better${N}`;
     } else {
       deltaStr = `${R}${delta.toFixed(0)}% behind${N}`;
     }
@@ -793,10 +793,10 @@ function printComparison(results: ScenarioResult[]): void {
   }
   console.log();
   console.log(
-    `  ${D}Note: headroom uses real production data + ML models (Kompress-base + AST code compressor).${N}`,
+    `  ${D}Note: headroom uses real production data + ML models (Kompress-base + multi-language AST compression).${N}`,
   );
   console.log(
-    `  ${D}triMemh uses regex-based ContentRouter + sentence-based CCR. Fixtures are simulated.${N}`,
+    `  ${D}triMemh uses ContentRouter + TypeScript compiler API summaries + sentence-based CCR. Fixtures are simulated.${N}`,
   );
   console.log();
 }
@@ -850,9 +850,7 @@ function printDiagnosis(results: ScenarioResult[]): void {
 
   console.log();
   console.log(`  ${B}To close the gap with headroom:${N}`);
-  console.log(
-    `  1. ${Y}AST-aware code compression${N} — replace regex signatures with tree-sitter`,
-  );
+  console.log(`  1. ${Y}Multi-language AST compression${N} — extend beyond TypeScript/JavaScript`);
   console.log(`  2. ${Y}Prose ML compression${N} — train small local model like Kompress-base`);
   console.log(`  3. ${Y}Multi-item splitting${N} — detect mixed content and split before routing`);
   console.log(

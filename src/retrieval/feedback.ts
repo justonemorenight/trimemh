@@ -19,8 +19,8 @@ import type { Database } from "bun:sqlite";
 
 import { audit } from "../application/service-helpers";
 import { CONFIG } from "../config";
-import { resolveMemoryId } from "../service/id-resolution";
 import { getMemoryById, updateMemoryItem } from "../persistence/repository";
+import { resolveMemoryId } from "../service/id-resolution";
 
 // ─── Types ──────────────────────────────────────────────────────────
 

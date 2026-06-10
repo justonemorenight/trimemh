@@ -431,9 +431,367 @@ function describeJsonSchema(obj: unknown, indent = 0): string {
   return `${pad}${typeof obj}`;
 }
 
-export function renderJson(text: string): RenderedContent {
+// ─── Smart JSON array compression (SmartCrusher-lite) ───────────────
+
+const SMART_ARRAY_MIN_ITEMS = 3;
+const SMART_JSON_ERROR_KEY_RE = /error|warning|exception|fail|alert/i;
+const SMART_JSON_ERROR_VALUE_RE = /error|fail|critical|exception|timeout|denied|rejected/i;
+
+/** Check if value is an array of homogeneous records */
+function isArrayOfRecords(value: unknown): value is Record<string, unknown>[] {
+  if (!Array.isArray(value) || value.length < SMART_ARRAY_MIN_ITEMS) {
+    return false;
+  }
+  if (!value.every((item) => typeof item === "object" && item !== null && !Array.isArray(item))) {
+    return false;
+  }
+  const firstKeys = new Set(Object.keys(value[0] as Record<string, unknown>));
+  const matchCount = value.slice(1).filter((item) => {
+    const keys = Object.keys(item as Record<string, unknown>);
+    const overlap = keys.filter((k) => firstKeys.has(k)).length;
+    return overlap / Math.max(firstKeys.size, keys.length) >= 0.8;
+  }).length;
+  return matchCount / (value.length - 1) >= 0.8;
+}
+
+/** Extract fields whose value is the same across ALL rows */
+function extractConstants(rows: Record<string, unknown>[]): Record<string, unknown> {
+  const first = rows[0];
+  if (!first) {
+    return {};
+  }
+  const constants: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(first)) {
+    if (typeof value === "object" && value !== null) {
+      continue;
+    }
+    if (rows.every((row) => row[key] === value)) {
+      constants[key] = value;
+    }
+  }
+  return constants;
+}
+
+interface FieldDistribution {
+  key: string;
+  counts: Map<string, number>;
+  uniqueRatio: number;
+}
+
+/** Extract value distributions for low-cardinality fields */
+function extractDistributions(
+  rows: Record<string, unknown>[],
+  constantKeys: Set<string>,
+): FieldDistribution[] {
+  const distributions: FieldDistribution[] = [];
+  const first = rows[0];
+  if (!first) {
+    return distributions;
+  }
+
+  for (const key of Object.keys(first)) {
+    if (constantKeys.has(key)) {
+      continue;
+    }
+    const counts = new Map<string, number>();
+    let allPrimitive = true;
+
+    for (const row of rows) {
+      const value = row[key];
+      if (typeof value === "object" && value !== null) {
+        allPrimitive = false;
+        break;
+      }
+      const strValue = String(value);
+      counts.set(strValue, (counts.get(strValue) ?? 0) + 1);
+    }
+
+    if (!allPrimitive) {
+      continue;
+    }
+    const uniqueRatio = counts.size / rows.length;
+    if (uniqueRatio < 0.5 && counts.size > 1) {
+      // low cardinality, not all same
+      distributions.push({ key, counts, uniqueRatio });
+    }
+  }
+
+  return distributions.sort((a, b) => a.uniqueRatio - b.uniqueRatio).slice(0, 5);
+}
+
+interface AnomalyRow {
+  index: number;
+  row: Record<string, unknown>;
+  reason: string;
+}
+
+/** Extract rows with error/warning signals or outlier values */
+function extractAnomalies(rows: Record<string, unknown>[]): AnomalyRow[] {
+  const anomalies: AnomalyRow[] = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row) {
+      continue;
+    }
+
+    // 1. Rows where error-like field has non-empty value
+    for (const [key, value] of Object.entries(row)) {
+      if (
+        SMART_JSON_ERROR_KEY_RE.test(key) &&
+        value &&
+        value !== "" &&
+        value !== null &&
+        value !== false &&
+        value !== 0
+      ) {
+        anomalies.push({
+          index: i,
+          row,
+          reason: `${key} is non-empty: ${String(value).slice(0, 80)}`,
+        });
+        break;
+      }
+    }
+
+    // 2. Rows where status-like field indicates failure
+    for (const key of ["status", "state", "result", "level"]) {
+      const value = row[key];
+      if (typeof value === "string" && SMART_JSON_ERROR_VALUE_RE.test(value)) {
+        if (!anomalies.some((a) => a.index === i)) {
+          anomalies.push({ index: i, row, reason: `${key}=${value}` });
+        }
+        break;
+      }
+    }
+  }
+
+  // 3. Numeric outliers (mean ± 2σ)
+  const first = rows[0];
+  if (first) {
+    for (const key of Object.keys(first)) {
+      const values = rows.map((r) => r[key]).filter((v): v is number => typeof v === "number");
+      if (values.length < 5) {
+        continue;
+      }
+      const mean = values.reduce((a, b) => a + b, 0) / values.length;
+      const stddev = Math.sqrt(values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length);
+      if (stddev === 0) {
+        continue;
+      }
+      const threshold = 2 * stddev;
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row) {
+          continue;
+        }
+        const value = row[key];
+        if (typeof value === "number" && Math.abs(value - mean) > threshold) {
+          if (!anomalies.some((a) => a.index === i)) {
+            anomalies.push({
+              index: i,
+              row,
+              reason: `${key}=${value} is outlier (mean=${mean.toFixed(1)}, σ=${stddev.toFixed(1)})`,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return anomalies.slice(0, 5); // Cap at 5
+}
+
+/** Sample head and tail rows, excluding anomaly indices */
+function sampleHeadTail(
+  rows: Record<string, unknown>[],
+  anomalyIndices: Set<number>,
+  n = 1,
+): {
+  head: Array<{ index: number; row: Record<string, unknown> }>;
+  tail: Array<{ index: number; row: Record<string, unknown> }>;
+} {
+  const head: Array<{ index: number; row: Record<string, unknown> }> = [];
+  const tail: Array<{ index: number; row: Record<string, unknown> }> = [];
+
+  for (let i = 0; i < rows.length && head.length < n; i++) {
+    const row = rows[i];
+    if (row && !anomalyIndices.has(i)) {
+      head.push({ index: i, row });
+    }
+  }
+  for (let i = rows.length - 1; i >= 0 && tail.length < n; i--) {
+    const row = rows[i];
+    if (row && !anomalyIndices.has(i) && !head.some((h) => h.index === i)) {
+      tail.push({ index: i, row });
+    }
+  }
+
+  return { head, tail: tail.reverse() };
+}
+
+function compactRowStr(row: Record<string, unknown>): string {
+  const entries = Object.entries(row).map(([k, v]) => {
+    if (typeof v === "string" && v.length > 60) {
+      return `${k}: "${v.slice(0, 57)}..."`;
+    }
+    return `${k}: ${JSON.stringify(v)}`;
+  });
+  return `{ ${entries.join(", ")} }`;
+}
+
+function compactSchemaStr(rows: Record<string, unknown>[]): string {
+  const first = rows[0];
+  if (!first) {
+    return "{}";
+  }
+  const fields = Object.entries(first).map(([k, v]) => {
+    if (v === null) {
+      return `${k}: null`;
+    }
+    if (Array.isArray(v)) {
+      return `${k}: array`;
+    }
+    return `${k}: ${typeof v}`;
+  });
+  return `{ ${fields.join(", ")} }`;
+}
+
+/** Render a smart summary for an array of homogeneous records */
+function jsonArraySummaryText(rows: Record<string, unknown>[], memoryId?: string): string {
+  const constants = extractConstants(rows);
+  const constantKeys = new Set(Object.keys(constants));
+  const distributions = extractDistributions(rows, constantKeys);
+  const anomalies = extractAnomalies(rows);
+  const anomalyIndices = new Set(anomalies.map((a) => a.index));
+  const { head, tail } = sampleHeadTail(rows, anomalyIndices);
+
+  const lines: string[] = [];
+  lines.push(`array[${rows.length}] of ${compactSchemaStr(rows)}`);
+
+  if (Object.keys(constants).length > 0) {
+    const constantStr = Object.entries(constants)
+      .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
+      .join(", ");
+    lines.push(`  constants: { ${constantStr} }`);
+  }
+
+  if (distributions.length > 0) {
+    for (const dist of distributions) {
+      const valueCounts = [...dist.counts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6)
+        .map(([value, count]) => `"${value}"×${count}`)
+        .join(", ");
+      lines.push(`  distribution: { ${dist.key}: ${valueCounts} }`);
+    }
+  }
+
+  if (anomalies.length > 0) {
+    lines.push("  anomalies:");
+    for (const a of anomalies) {
+      lines.push(`    row[${a.index}]: ${compactRowStr(a.row)}`);
+      lines.push(`      reason: ${a.reason}`);
+    }
+  }
+
+  if (head.length > 0) {
+    for (const h of head) {
+      lines.push(`  head[${h.index}]: ${compactRowStr(h.row)}`);
+    }
+  }
+  if (tail.length > 0) {
+    for (const t of tail) {
+      lines.push(`  tail[${t.index}]: ${compactRowStr(t.row)}`);
+    }
+  }
+
+  if (memoryId) {
+    lines.push(`  retrieve full with: memory_retrieve("${memoryId}")`);
+  }
+
+  return lines.join("\n");
+}
+
+function renderJsonArraySummary(
+  rows: Record<string, unknown>[],
+  originalText: string,
+  memoryId?: string,
+): RenderedContent {
+  const display = jsonArraySummaryText(rows, memoryId);
+  return {
+    display: guardXmlPayload(display),
+    contentType: "json",
+    compressed: originalText.length > display.length * 1.5,
+    displayTokens: Math.ceil(display.length / 4),
+  };
+}
+
+/** For objects containing a large array-of-records field */
+function renderJsonWithNestedArrays(
+  obj: Record<string, unknown>,
+  originalText: string,
+  memoryId?: string,
+): RenderedContent | null {
+  // Find the largest array-of-records field
+  let bestKey = "";
+  let bestArray: Record<string, unknown>[] = [];
+
+  for (const [key, value] of Object.entries(obj)) {
+    if (isArrayOfRecords(value) && value.length > bestArray.length) {
+      bestKey = key;
+      bestArray = value;
+    }
+  }
+
+  if (bestArray.length === 0) {
+    return null;
+  }
+
+  // Render non-array fields as schema
+  const otherFields: string[] = [];
+  for (const [key, value] of Object.entries(obj)) {
+    if (key === bestKey) {
+      continue;
+    }
+    otherFields.push(`  ${key}: ${describeJsonSchema(value, 0).trimStart()}`);
+  }
+
+  const lines: string[] = [];
+  lines.push("object {");
+  for (const f of otherFields) {
+    lines.push(f);
+  }
+  lines.push(`  ${bestKey}: ${jsonArraySummaryText(bestArray, memoryId)}`);
+  lines.push("}");
+
+  const display = lines.join("\n");
+  return {
+    display: guardXmlPayload(display),
+    contentType: "json",
+    compressed: originalText.length > display.length * 1.5,
+    displayTokens: Math.ceil(display.length / 4),
+  };
+}
+
+export function renderJson(text: string, memoryId?: string): RenderedContent {
   try {
     const parsed = JSON.parse(text);
+
+    // Smart array compression for arrays of records
+    if (isArrayOfRecords(parsed)) {
+      return renderJsonArraySummary(parsed, text, memoryId);
+    }
+
+    // Check if top-level object contains array-of-records fields
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      const result = renderJsonWithNestedArrays(parsed as Record<string, unknown>, text, memoryId);
+      if (result) {
+        return result;
+      }
+    }
+
+    // Existing: schema-only for other JSON
     const schema = describeJsonSchema(parsed);
     return {
       display: guardXmlPayload(schema),

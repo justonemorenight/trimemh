@@ -1,6 +1,9 @@
 import type { CodeEntityType, CodeLinkRelation, SuggestedCodeLink } from "../domain/schema";
 import { extractFilePaths } from "./path-extract";
 
+const DOCUMENT_FILE_RE = /\.(md|txt|rst)$/i;
+const CONFIG_FILE_RE = /\.(json|toml|yaml|yml|config)$/i;
+
 export function suggestCodeLinksFromText(
   text: string,
   extraPaths: string[] = [],
@@ -16,10 +19,10 @@ export function suggestCodeLinksFromText(
 
 function relationForPath(path: string): CodeLinkRelation {
   const base = path.split("/").pop() ?? path;
-  if (/\.(md|txt|rst)$/i.test(base)) {
+  if (DOCUMENT_FILE_RE.test(base)) {
     return "documents";
   }
-  if (/\.(json|toml|yaml|yml|config)$/i.test(base) || base.includes("config")) {
+  if (CONFIG_FILE_RE.test(base) || base.includes("config")) {
     return "implements";
   }
   return "relates_to";

@@ -2,8 +2,8 @@ import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { extname, join, relative } from "node:path";
 
-import { CONFIG } from "../config";
 import { parseFile } from "../code-intel/code-parser";
+import { CONFIG } from "../config";
 import { getLogger } from "../infrastructure/logging";
 import { findCodeEntityByKey } from "../persistence/repository";
 import { createOrGetCodeEntity } from "../service/graph-service";

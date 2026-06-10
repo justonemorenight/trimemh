@@ -18,6 +18,7 @@ import {
 } from "./ccr";
 import type { MemoryContentType } from "./content-router";
 import { renderContentByType } from "./content-router";
+import type { MemoryEvidenceInput } from "./evidence";
 
 export const COMPACTION_THRESHOLD = 100;
 export const SEMANTIC_DETAIL_THRESHOLD = 0.75;
@@ -26,6 +27,9 @@ export const SEMANTIC_DETAIL_TOKEN_CAP = 1_000;
 export const CODE_PATH_DETAIL_LIMIT = 5;
 export const LRU_IDLE_TURN_LIMIT = 3;
 export const MEMORY_CONTEXT_BUDGET_RATIO = 0.1;
+export const MIN_MEMORY_CONTEXT_BUDGET_RATIO = 0.01;
+export const MAX_MEMORY_CONTEXT_BUDGET_RATIO = 0.5;
+export const CHUNKED_MEMORY_PREFIX = "[chunked memory:";
 
 // ─── CacheAligner (P0 — KV-cache stabilization) ──────────────────
 
@@ -88,6 +92,17 @@ export type TaskContextType =
   | "conversation"
   | "unknown";
 
+export const TASK_CONTEXT_TYPES: readonly TaskContextType[] = [
+  "code_generation",
+  "code_review",
+  "debugging",
+  "planning",
+  "refactoring",
+  "documentation",
+  "conversation",
+  "unknown",
+];
+
 /** Budget ratios per task type. Higher = more memory context. */
 export const TASK_BUDGET_RATIOS: Record<TaskContextType, number> = {
   code_generation: 0.08, // need max room for code output
@@ -120,6 +135,7 @@ const TASK_CLASSIFIERS: Array<{ pattern: RegExp; type: TaskContextType }> = [
   { pattern: /\b(plan|design|architect|decide|roadmap|strategy)\b/i, type: "planning" },
   { pattern: /\b(refactor|restructure|reorganize|clean|improve)\b/i, type: "refactoring" },
   { pattern: /\b(document|explain|describe|summarize|readme)\b/i, type: "documentation" },
+  { pattern: /\b(chat|talk|conversation|quick question|brainstorm)\b/i, type: "conversation" },
 ];
 
 /**
@@ -153,8 +169,19 @@ export function adaptiveBudget(
   taskType: TaskContextType = "unknown",
   overrideRatio?: number,
 ): number {
-  const ratio = overrideRatio ?? TASK_BUDGET_RATIOS[taskType];
+  const ratio = budgetRatioForTask(taskType, overrideRatio);
   return Math.floor(modelContextTokens * ratio);
+}
+
+export function budgetRatioForTask(taskType: TaskContextType, overrideRatio?: number): number {
+  const rawRatio = overrideRatio ?? TASK_BUDGET_RATIOS[taskType] ?? MEMORY_CONTEXT_BUDGET_RATIO;
+  if (!Number.isFinite(rawRatio)) {
+    return MEMORY_CONTEXT_BUDGET_RATIO;
+  }
+  return Math.max(
+    MIN_MEMORY_CONTEXT_BUDGET_RATIO,
+    Math.min(MAX_MEMORY_CONTEXT_BUDGET_RATIO, rawRatio),
+  );
 }
 
 const RISK_ORDER: Record<RiskLevel, number> = {
@@ -209,6 +236,7 @@ export interface ActiveDetail {
 
 export interface PromptContextState {
   layer1: string;
+  memoryEvidence?: MemoryEvidenceInput[];
   layer2Details: MemoryDetailInput[];
   layer3Lineages: MemoryLineageInput[];
 }
@@ -218,6 +246,8 @@ export interface BudgetResult {
   evicted: Array<{ id: string; layer: "layer2" | "layer3"; reason: string }>;
   compactedIndex: boolean;
   overBudget: boolean;
+  budgetTokens: number;
+  estimatedPromptTokens: number;
 }
 
 function riskForKind(kind: MemoryKind): RiskLevel {
@@ -359,7 +389,17 @@ export interface SmartDetailOutput {
  * 3. If result is still long and is prose, apply CCR compression
  * 4. Track deferred details in the CCR store
  */
-export function renderDetailSmart(item: MemoryItem): SmartDetailOutput {
+function buildSmartDetailOutput(item: MemoryItem): SmartDetailOutput {
+  if (item.text.startsWith(CHUNKED_MEMORY_PREFIX)) {
+    return {
+      displayContent: guardXmlPayload(item.text),
+      contentType: "prose",
+      compressed: true,
+      deferred: null,
+      displayTokens: estimateTokens(item.text),
+    };
+  }
+
   // Step 1+2: ContentRouter — type-specific compression
   const rendered = renderContentByType(item);
 
@@ -396,13 +436,6 @@ export function renderDetailSmart(item: MemoryItem): SmartDetailOutput {
     }
   }
 
-  // Step 4: Track in CCR store
-  if (deferred) {
-    registerDeferred(currentCcrStore, deferred);
-  } else {
-    trackFullText(currentCcrStore);
-  }
-
   return {
     displayContent,
     contentType: rendered.contentType,
@@ -412,35 +445,71 @@ export function renderDetailSmart(item: MemoryItem): SmartDetailOutput {
   };
 }
 
+export function renderDetailSmart(item: MemoryItem): SmartDetailOutput {
+  const output = buildSmartDetailOutput(item);
+
+  // Step 4: Track in CCR store
+  if (output.deferred) {
+    registerDeferred(currentCcrStore, output.deferred);
+  } else {
+    trackFullText(currentCcrStore);
+  }
+
+  return output;
+}
+
+function compileLayer2DetailXml(detail: MemoryDetailInput, smart: SmartDetailOutput): string {
+  const lines: string[] = [];
+  const item = detail.item;
+  const risk = riskForKind(item.kind as MemoryKind);
+
+  const contentType = detail.codeLinks?.length
+    ? "code" // code-linked memories are always code-related
+    : smart.contentType;
+
+  lines.push(
+    `  <detail id="${xmlAttr(item.id)}" kind="${item.kind}" risk="${risk}" content_type="${contentType}" compressed="${smart.compressed}">`,
+  );
+  lines.push(`    <content>${smart.displayContent}</content>`);
+  if (detail.codeLinks?.length) {
+    lines.push("    <code_links>");
+    for (const link of detail.codeLinks) {
+      lines.push(
+        `      <link relation="${xmlAttr(link.relation)}" path="${xmlAttr(link.path)}" symbol="${xmlAttr(link.symbol)}" line_start="${xmlAttr(link.line_start)}" line_end="${xmlAttr(link.line_end)}" confidence="${xmlAttr(link.confidence)}" />`,
+      );
+    }
+    lines.push("    </code_links>");
+  }
+  lines.push(`    <confidence>${xmlAttr(item.confidence)}</confidence>`);
+  lines.push(`    <source>${xmlAttr(item.source)}</source>`);
+  lines.push("  </detail>");
+  return lines.join("\n");
+}
+
 export function compileLayer2Details(details: MemoryDetailInput[]): string {
   const lines = [`<memory_details count="${details.length}">`];
   for (const detail of details) {
-    const item = detail.item;
-    const risk = riskForKind(item.kind as MemoryKind);
-    const smart = renderDetailSmart(item);
-
-    const contentType = detail.codeLinks?.length
-      ? "code" // code-linked memories are always code-related
-      : smart.contentType;
-
-    lines.push(
-      `  <detail id="${xmlAttr(item.id)}" kind="${item.kind}" risk="${risk}" content_type="${contentType}" compressed="${smart.compressed}">`,
-    );
-    lines.push(`    <content>${smart.displayContent}</content>`);
-    if (detail.codeLinks?.length) {
-      lines.push("    <code_links>");
-      for (const link of detail.codeLinks) {
-        lines.push(
-          `      <link relation="${xmlAttr(link.relation)}" path="${xmlAttr(link.path)}" symbol="${xmlAttr(link.symbol)}" line_start="${xmlAttr(link.line_start)}" line_end="${xmlAttr(link.line_end)}" confidence="${xmlAttr(link.confidence)}" />`,
-        );
-      }
-      lines.push("    </code_links>");
-    }
-    lines.push(`    <confidence>${xmlAttr(item.confidence)}</confidence>`);
-    lines.push(`    <source>${xmlAttr(item.source)}</source>`);
-    lines.push("  </detail>");
+    lines.push(compileLayer2DetailXml(detail, renderDetailSmart(detail.item)));
   }
   lines.push("</memory_details>");
+  return lines.join("\n");
+}
+
+export function compileMemoryEvidence(evidence: MemoryEvidenceInput[] = []): string {
+  if (evidence.length === 0) {
+    return '<memory_evidence count="0" />';
+  }
+  const lines = [`<memory_evidence count="${evidence.length}">`];
+  for (const span of evidence) {
+    const offsetAttrs =
+      span.sourceStart !== undefined || span.sourceEnd !== undefined
+        ? ` source_start="${xmlAttr(span.sourceStart)}" source_end="${xmlAttr(span.sourceEnd)}"`
+        : "";
+    lines.push(
+      `  <evidence memory_id="${xmlAttr(span.memoryId)}" kind="${span.kind}" label="${span.label}" score="${xmlAttr(span.score)}"${offsetAttrs}>${guardXmlPayload(span.text)}</evidence>`,
+    );
+  }
+  lines.push("</memory_evidence>");
   return lines.join("\n");
 }
 
@@ -580,18 +649,22 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-function totalStateTokens(state: PromptContextState): number {
+function estimateLayer2DetailsPromptTokens(details: MemoryDetailInput[]): number {
+  const lines = [`<memory_details count="${details.length}">`];
+  for (const detail of details) {
+    lines.push(compileLayer2DetailXml(detail, buildSmartDetailOutput(detail.item)));
+  }
+  lines.push("</memory_details>");
+  return estimateTokens(lines.join("\n"));
+}
+
+export function estimatePromptStateTokens(state: PromptContextState): number {
   return (
     estimateTokens(state.layer1) +
-    state.layer2Details.reduce((sum, detail) => sum + estimateTokens(detail.item.text), 0) +
+    estimateTokens(compileMemoryEvidence(state.memoryEvidence)) +
+    estimateLayer2DetailsPromptTokens(state.layer2Details) +
     state.layer3Lineages.reduce(
-      (sum, lineage) =>
-        sum +
-        estimateTokens(lineage.item.text) +
-        lineage.auditEvents.reduce(
-          (eventSum, event) => eventSum + estimateTokens(event.payload_json),
-          0,
-        ),
+      (sum, lineage) => sum + estimateTokens(compileLayer3Lineage(lineage)),
       0,
     )
   );
@@ -613,21 +686,31 @@ export function enforceContextBudget(
   state: PromptContextState,
   opts: {
     modelContextTokens: number;
+    budgetTokens?: number;
     allIndexMemories?: MemoryIndexItem[];
     projectId?: string;
   },
 ): BudgetResult {
-  const budget = Math.floor(opts.modelContextTokens * MEMORY_CONTEXT_BUDGET_RATIO);
+  const budget =
+    opts.budgetTokens ?? Math.floor(opts.modelContextTokens * MEMORY_CONTEXT_BUDGET_RATIO);
   const next: PromptContextState = {
     layer1: state.layer1,
+    memoryEvidence: [...(state.memoryEvidence ?? [])],
     layer2Details: [...state.layer2Details],
     layer3Lineages: [...state.layer3Lineages],
   };
   const evicted: BudgetResult["evicted"] = [];
   let compactedIndex = false;
 
-  if (totalStateTokens(next) <= budget) {
-    return { state: next, evicted, compactedIndex, overBudget: false };
+  if (estimatePromptStateTokens(next) <= budget) {
+    return {
+      state: next,
+      evicted,
+      compactedIndex,
+      overBudget: false,
+      budgetTokens: budget,
+      estimatedPromptTokens: estimatePromptStateTokens(next),
+    };
   }
 
   for (const lineage of next.layer3Lineages) {
@@ -636,7 +719,7 @@ export function enforceContextBudget(
   next.layer3Lineages = [];
 
   for (const detail of sortDetailsForEviction(next.layer2Details)) {
-    if (totalStateTokens(next) <= budget) {
+    if (estimatePromptStateTokens(next) <= budget) {
       break;
     }
     const risk = riskForKind(detail.item.kind as MemoryKind);
@@ -644,10 +727,19 @@ export function enforceContextBudget(
       continue;
     }
     next.layer2Details = next.layer2Details.filter((d) => d.item.id !== detail.item.id);
+    next.memoryEvidence = next.memoryEvidence?.filter(
+      (evidence) => evidence.memoryId !== detail.item.id,
+    );
     evicted.push({ id: detail.item.id, layer: "layer2", reason: `budget_${risk}_risk_eviction` });
   }
 
-  if (totalStateTokens(next) > budget && opts.allIndexMemories) {
+  while ((next.memoryEvidence?.length ?? 0) > 0 && estimatePromptStateTokens(next) > budget) {
+    const sorted = [...(next.memoryEvidence ?? [])].sort((a, b) => a.score - b.score);
+    const dropped = sorted[0];
+    next.memoryEvidence = (next.memoryEvidence ?? []).filter((evidence) => evidence !== dropped);
+  }
+
+  if (estimatePromptStateTokens(next) > budget && opts.allIndexMemories) {
     next.layer1 = compileLayer1Index(opts.allIndexMemories, {
       projectId: opts.projectId,
       forceCompact: true,
@@ -659,7 +751,9 @@ export function enforceContextBudget(
     state: next,
     evicted,
     compactedIndex,
-    overBudget: totalStateTokens(next) > budget,
+    overBudget: estimatePromptStateTokens(next) > budget,
+    budgetTokens: budget,
+    estimatedPromptTokens: estimatePromptStateTokens(next),
   };
 }
 

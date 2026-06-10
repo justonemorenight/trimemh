@@ -2,20 +2,20 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import type { MemoryItem } from "../src/domain/schema";
 import { closeDb, getDb, runMigrations } from "../src/persistence/db";
 import { applyFeedback } from "../src/retrieval/feedback";
 import { scoreRecall } from "../src/retrieval/scoring";
-import type { MemoryItem } from "../src/domain/schema";
+import { shouldAutoApproveMemory } from "../src/service/auto-approval";
+import { suggestCodeLinksFromText } from "../src/service/code-link-suggest";
 import { resolveMemoryId } from "../src/service/id-resolution";
+import { mcpPropose } from "../src/service/mcp-service";
 import { extractFilePaths, looksLikeToolingMemory } from "../src/service/path-extract";
 import {
   findSimilarPendingProposal,
   formatProposalBatchHints,
 } from "../src/service/proposal-dedup";
-import { mcpPropose } from "../src/service/mcp-service";
 import { propose } from "../src/service/proposal-service";
-import { shouldAutoApproveMemory } from "../src/service/auto-approval";
-import { suggestCodeLinksFromText } from "../src/service/code-link-suggest";
 
 const ROOT = "/tmp/trimemh-dx-tests";
 const PROJECT = "dx-test-project";
@@ -151,7 +151,9 @@ describe("proposal dedup", () => {
 
 describe("tooling kind and path extract", () => {
   it("extracts file paths from memory text", () => {
-    const paths = extractFilePaths("Configured Biome in frontend/biome.json and frontend/package.json");
+    const paths = extractFilePaths(
+      "Configured Biome in frontend/biome.json and frontend/package.json",
+    );
     expect(paths).toContain("frontend/biome.json");
     expect(paths).toContain("frontend/package.json");
   });

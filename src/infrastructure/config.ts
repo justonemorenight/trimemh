@@ -39,7 +39,6 @@ function hashString(s: string): string {
 }
 
 function readTomlValue(content: string, key: string): string | null {
-  // biome-ignore lint/performance/useTopLevelRegex: warning suppression
   const match = content.match(new RegExp(`${key}\\s*=\\s*"([^"]+)"`));
   return match?.[1] ?? null;
 }
@@ -166,9 +165,7 @@ export function loadResolvedConfig(
   let configRoot = configRootFromCwd ?? workDir;
 
   if (configRootFromCwd && configRootFromCwd !== workDir) {
-    warnings.push(
-      `cwd has no .memh.toml but found one at ${configRootFromCwd}`,
-    );
+    warnings.push(`cwd has no .memh.toml but found one at ${configRootFromCwd}`);
   }
 
   // When db path is pinned, also walk up from the db directory for project config.

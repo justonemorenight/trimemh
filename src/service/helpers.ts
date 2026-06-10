@@ -1,15 +1,14 @@
 import type { Database } from "bun:sqlite";
 
-import type { MemoryItem } from "../domain/schema";
-import { CONFIG } from "../config";
 import { audit, embeddingForText, guardedPayload, json, now } from "../application/service-helpers";
-import { getMemoriesWithEmbeddings } from "../persistence/repository";
+import { CONFIG } from "../config";
+import type { MemoryItem } from "../domain/schema";
+import { getMemoriesWithEmbeddings, mergeMemoryEvidence } from "../persistence/repository";
 import {
   SEMANTIC_DEDUP_THRESHOLD,
   dedupThresholdForKind,
   findSemanticDuplicates,
 } from "../retrieval/dedup";
-import { mergeMemoryEvidence } from "../persistence/repository";
 
 // ─── Validation helpers ──────────────────────────────────────────
 

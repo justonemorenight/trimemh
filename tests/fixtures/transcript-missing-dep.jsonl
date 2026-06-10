@@ -1,0 +1,6 @@
+{"type":"tool_use","name":"Bash","input":{"command":"vitest run"}}
+{"type":"tool_result","is_error":true,"content":"error: vitest: command not found"}
+{"type":"tool_use","name":"Bash","input":{"command":"bun add -d vitest"}}
+{"type":"tool_result","is_error":false,"content":"installed vitest@4.1.8"}
+{"type":"tool_use","name":"Bash","input":{"command":"vitest run"}}
+{"type":"tool_result","is_error":false,"content":"3 pass, 0 fail"}

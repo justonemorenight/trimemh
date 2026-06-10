@@ -9,8 +9,8 @@ import {
   resolveProjectId,
 } from "../src/infrastructure/config";
 import { closeDb, getDb, runMigrations } from "../src/persistence/db";
-import { remember } from "../src/service/memory-service";
 import { formatProjectMismatchWarnings, mcpStats } from "../src/service/mcp-service";
+import { remember } from "../src/service/memory-service";
 
 const ROOT = "/tmp/trimemh-config-tests";
 let counter = 0;
@@ -24,10 +24,7 @@ function fixture(name: string): string {
   return dir;
 }
 
-function writeProjectConfig(
-  dir: string,
-  opts: { projectId?: string; dbPath?: string } = {},
-): void {
+function writeProjectConfig(dir: string, opts: { projectId?: string; dbPath?: string } = {}): void {
   const lines = [
     opts.projectId ? `project_id = "${opts.projectId}"` : null,
     opts.dbPath ? `db_path = "${opts.dbPath}"` : null,

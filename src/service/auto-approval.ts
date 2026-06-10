@@ -104,7 +104,10 @@ export function shouldAutoApproveMemory(input: {
   if (forceAuto) {
     const configThreshold = CONFIG.autoApprove.maxRiskLevel as RiskLevel;
     if (riskOrderIndex(risk) <= riskOrderIndex(configThreshold)) {
-      return evaluateAutoApproveThreshold(risk, `Agent requested auto_approve for "${risk}" memory.`);
+      return evaluateAutoApproveThreshold(
+        risk,
+        `Agent requested auto_approve for "${risk}" memory.`,
+      );
     }
     return {
       autoApprove: false,

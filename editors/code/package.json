@@ -1,0 +1,156 @@
+{
+  "name": "trimemh-vscode",
+  "displayName": "triMemh",
+  "description": "VSCode UI for triMemh local-first memory management.",
+  "version": "0.1.0",
+  "publisher": "trimemh",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:trimemh.refresh",
+    "onCommand:trimemh.searchMemories",
+    "onCommand:trimemh.rememberSelection",
+    "onView:trimemh.dashboard",
+    "onView:trimemh.proposals",
+    "onView:trimemh.memories"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "trimemh",
+          "title": "triMemh",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "trimemh": [
+        {
+          "type": "webview",
+          "id": "trimemh.dashboard",
+          "name": "Dashboard"
+        },
+        {
+          "type": "tree",
+          "id": "trimemh.proposals",
+          "name": "Pending Proposals"
+        },
+        {
+          "type": "tree",
+          "id": "trimemh.memories",
+          "name": "Active Memories"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "trimemh.refresh",
+        "title": "triMemh: Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "trimemh.refreshContext",
+        "title": "triMemh: Refresh Context"
+      },
+      {
+        "command": "trimemh.showCurrentContext",
+        "title": "triMemh: Show Current Context"
+      },
+      {
+        "command": "trimemh.searchMemories",
+        "title": "triMemh: Search Memories"
+      },
+      {
+        "command": "trimemh.rememberSelection",
+        "title": "triMemh: Remember Selection"
+      },
+      {
+        "command": "trimemh.proposal.approve",
+        "title": "triMemh: Approve Proposal",
+        "icon": "$(check)"
+      },
+      {
+        "command": "trimemh.proposal.reject",
+        "title": "triMemh: Reject Proposal",
+        "icon": "$(x)"
+      },
+      {
+        "command": "trimemh.copyId",
+        "title": "triMemh: Copy ID",
+        "icon": "$(copy)"
+      }
+    ],
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "trimemh.proposal.approve",
+          "when": "view == trimemh.proposals && viewItem == pendingProposal",
+          "group": "inline"
+        },
+        {
+          "command": "trimemh.proposal.reject",
+          "when": "view == trimemh.proposals && viewItem == pendingProposal",
+          "group": "inline"
+        },
+        {
+          "command": "trimemh.copyId",
+          "when": "view == trimemh.proposals || view == trimemh.memories",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "triMemh",
+      "properties": {
+        "trimemh.command": {
+          "type": "string",
+          "default": "trimemh",
+          "description": "Command used to run the triMemh CLI. Use 'bun' with trimemh.args for local development."
+        },
+        "trimemh.args": {
+          "type": "array",
+          "default": [],
+          "items": { "type": "string" },
+          "description": "Arguments prepended before the triMemh subcommand, e.g. ['run', 'src/cli.ts'] when trimemh.command is 'bun'."
+        },
+        "trimemh.dbPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional database path passed to triMemh as --db."
+        },
+        "trimemh.defaultRecallMode": {
+          "type": "string",
+          "enum": ["fts", "vector", "hybrid"],
+          "default": "fts",
+          "description": "Default recall mode used by Search Memories when supported by the CLI."
+        },
+        "trimemh.defaultEvidenceMode": {
+          "type": "string",
+          "enum": ["auto", "off", "force"],
+          "default": "auto",
+          "description": "Default evidence mode passed to triMemh context commands."
+        },
+        "trimemh.autoRefreshOnActiveEditorChange": {
+          "type": "boolean",
+          "default": false,
+          "description": "Refresh the dashboard when the active editor changes. Disabled by default to avoid frequent CLI runs."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.9.3"
+  }
+}

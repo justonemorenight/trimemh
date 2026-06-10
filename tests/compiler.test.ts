@@ -3,14 +3,18 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { unlinkSync } from "node:fs";
 
 import {
+  adaptiveBudget,
+  budgetRatioForTask,
   clearLayer3AtTurnEnd,
   compileLayer1Index,
   compileLayer2Details,
   compileLayer2DetailsFromCode,
   compileLayer3Lineage,
+  compileMemoryEvidence,
   detectAdversarialOverride,
   detectsOperationalContext,
   enforceContextBudget,
+  estimatePromptStateTokens,
   evictLruDetails,
   selectCodePathDetails,
   selectOperationalDetails,
@@ -100,6 +104,14 @@ afterEach(() => {
 });
 
 describe("compiler.ts — progressive disclosure", () => {
+  it("calculates adaptive memory budget by task type and override ratio", () => {
+    expect(adaptiveBudget(10_000, "planning")).toBe(2_000);
+    expect(adaptiveBudget(10_000, "code_review")).toBe(1_500);
+    expect(adaptiveBudget(10_000, "conversation")).toBe(600);
+    expect(adaptiveBudget(10_000, "debugging", 0.18)).toBe(1_800);
+    expect(budgetRatioForTask("unknown", Number.NaN)).toBe(0.1);
+  });
+
   it("renders Layer 1 expanded XML and escapes memory text", () => {
     const xml = compileLayer1Index(
       [
@@ -155,6 +167,47 @@ describe("compiler.ts — progressive disclosure", () => {
     expect(xml).toContain("&lt;always&gt;");
     expect(xml).toContain('path="src/service.ts"');
     expect(xml).toContain('line_start="10"');
+  });
+
+  it("renders memory evidence and includes it in prompt token estimates", () => {
+    const memory = item("ev-1", "decision", "Decision evidence body");
+    const evidenceXml = compileMemoryEvidence([
+      {
+        memoryId: memory.id,
+        kind: memory.kind,
+        label: "decision",
+        text: "Use evidence before details <proof>",
+        score: 0.9,
+        sourceStart: 0,
+        sourceEnd: 32,
+      },
+    ]);
+
+    expect(evidenceXml).toContain("<memory_evidence");
+    expect(evidenceXml).toContain("&lt;proof&gt;");
+    expect(
+      estimatePromptStateTokens({
+        layer1: "<memory_index />",
+        memoryEvidence: [],
+        layer2Details: [],
+        layer3Lineages: [],
+      }),
+    ).toBeLessThan(
+      estimatePromptStateTokens({
+        layer1: "<memory_index />",
+        memoryEvidence: [
+          {
+            memoryId: memory.id,
+            kind: memory.kind,
+            label: "decision",
+            text: "Use evidence before details",
+            score: 0.9,
+          },
+        ],
+        layer2Details: [],
+        layer3Lineages: [],
+      }),
+    );
   });
 
   it("renders Layer 2 details from code search results", () => {
@@ -304,6 +357,37 @@ describe("compiler.ts — progressive disclosure", () => {
     expect(result.evicted.some((e) => e.layer === "layer3")).toBe(true);
     expect(result.state.layer2Details.some((d) => d.item.id === "critical")).toBe(true);
     expect(result.state.layer2Details.some((d) => d.item.id === "low")).toBe(false);
+  });
+
+  it("uses compressed prompt estimate when enforcing budget", () => {
+    const longDecision = item(
+      "long-decision",
+      "decision",
+      Array.from(
+        { length: 24 },
+        (_, index) =>
+          `Decision sentence ${index} keeps enough repeated planning context words to trigger reversible compression cleanly.`,
+      ).join(" "),
+    );
+
+    const state = {
+      layer1: compileLayer1Index([longDecision]),
+      layer2Details: [{ item: longDecision }],
+      layer3Lineages: [],
+    };
+    const estimated = estimatePromptStateTokens(state);
+
+    const result = enforceContextBudget(state, {
+      modelContextTokens: 1_000,
+      budgetTokens: estimated + 10,
+      allIndexMemories: [longDecision],
+      projectId: PROJECT,
+    });
+
+    expect(result.estimatedPromptTokens).toBeLessThanOrEqual(result.budgetTokens);
+    expect(result.state.layer2Details.some((detail) => detail.item.id === longDecision.id)).toBe(
+      true,
+    );
   });
 
   it("detects adversarial override attempts against high or critical target memories", () => {

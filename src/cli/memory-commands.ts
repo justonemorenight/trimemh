@@ -17,6 +17,7 @@ export function registerMemoryCommands(program: Command): void {
     .option("--source <source>", "Source label", "cli:user:explicit")
     .option("--expires <iso-date>", "Expiration date (ISO 8601)")
     .option("--db <path>", "Custom database path")
+    .option("--json", "Output JSON for editor integrations")
     .action(
       withDb((db, config, opts) => {
         const item = remember(db, {
@@ -28,6 +29,10 @@ export function registerMemoryCommands(program: Command): void {
           source: opts.source,
           expiresAt: opts.expires ?? undefined,
         });
+        if (opts.json) {
+          console.log(JSON.stringify({ success: true, data: item }, null, 2));
+          return;
+        }
         console.log(`[triMemh] Remembered: ${item.id}`);
         console.log(`  kind: ${item.kind}`);
         console.log(`  text: ${item.text.slice(0, 80)}${item.text.length > 80 ? "…" : ""}`);
@@ -42,15 +47,22 @@ export function registerMemoryCommands(program: Command): void {
     .argument("<query>", "Search query")
     .option("--limit <number>", "Max results", "10")
     .option("--db <path>", "Custom database path")
+    .option("--json", "Output JSON for editor integrations")
     .action(
       withDb((db, config, query, opts) => {
-        const results = recall(db, config.projectId, query, parseInt(opts.limit, 10));
-        if (results.length === 0) {
+        const memoryResults = recall(db, config.projectId, query, parseInt(opts.limit, 10));
+        if (opts.json) {
+          console.log(JSON.stringify({ success: true, data: memoryResults }, null, 2));
+          return;
+        }
+        if (memoryResults.length === 0) {
           console.log("[triMemh] No memories found.");
         } else {
-          for (const r of results) {
-            console.log(`── ${r.item.id} (${r.item.kind}, confidence: ${r.item.confidence})`);
-            console.log(`   ${r.snippet}`);
+          for (const result of memoryResults) {
+            console.log(
+              `── ${result.item.id} (${result.item.kind}, confidence: ${result.item.confidence})`,
+            );
+            console.log(`   ${result.snippet}`);
             console.log();
           }
         }
@@ -65,9 +77,14 @@ export function registerMemoryCommands(program: Command): void {
     .option("--kind <kind>", "Filter by kind")
     .option("--status <status>", "Filter by status (active/archived/expired)")
     .option("--db <path>", "Custom database path")
+    .option("--json", "Output JSON for editor integrations")
     .action(
       withDb((db, config, opts) => {
         const items = listAll(db, config.projectId, opts.kind, opts.status);
+        if (opts.json) {
+          console.log(JSON.stringify({ success: true, data: items }, null, 2));
+          return;
+        }
         if (items.length === 0) {
           console.log("[triMemh] No memories found.");
         } else {
@@ -89,9 +106,14 @@ export function registerMemoryCommands(program: Command): void {
     .description("Delete a memory by id")
     .argument("<id>", "Memory ID (or prefix)")
     .option("--db <path>", "Custom database path")
+    .option("--json", "Output JSON for editor integrations")
     .action(
-      withDb((db, config, id, _opts) => {
+      withDb((db, config, id, opts) => {
         const deleted = forget(db, config.projectId, id);
+        if (opts.json) {
+          console.log(JSON.stringify({ success: true, data: { deleted, id } }, null, 2));
+          return;
+        }
         if (deleted) {
           console.log(`[triMemh] Forgotten: ${id}`);
         }

@@ -3,18 +3,16 @@ import type { Database } from "bun:sqlite";
 import { v4 as uuidv4 } from "uuid";
 
 import { recall } from "../application/recall-use-cases";
-import type { MemoryKind, McpProposalResult } from "../domain/schema";
-import type { MemoryItem } from "../domain/schema";
+import type { McpProposalResult, MemoryItem, MemoryKind } from "../domain/schema";
 import type { MemorySessionRecord } from "../persistence/repository";
 import {
   listMemoryItems,
   listMemorySessions,
   upsertMemorySession,
 } from "../persistence/repository";
-import { formatProposalResultExtras } from "./mcp-service";
-import { mcpPropose } from "./mcp-service";
-import { looksLikeToolingMemory } from "./path-extract";
 import { recordLifecycleEvent } from "./lifecycle-service";
+import { formatProposalResultExtras, mcpPropose } from "./mcp-service";
+import { looksLikeToolingMemory } from "./path-extract";
 
 export interface SessionSummaryInput {
   projectId: string;
@@ -219,7 +217,10 @@ export function closeSession(db: Database, input: SessionCloseInput): SessionSum
     );
   }
 
-  const lines = results.flatMap((result) => [result.message, ...formatProposalResultExtras(result)]);
+  const lines = results.flatMap((result) => [
+    result.message,
+    ...formatProposalResultExtras(result),
+  ]);
 
   return {
     status: results.every((result) => result.status === "approved") ? "approved" : "pending",
