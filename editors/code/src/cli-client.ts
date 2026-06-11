@@ -2,7 +2,17 @@ import { spawn } from "node:child_process";
 import * as vscode from "vscode";
 
 import { getConfig, workspaceRoot } from "./config";
-import type { ContextResult, MemoryItem, MemoryProposal, RecallResult, TriMemhJson, TriMemhStatus } from "./types";
+import type {
+  AtlasGraph,
+  ContextResult,
+  MemoryItem,
+  MemoryProposal,
+  RecallResult,
+  StaleMemoryReport,
+  TriMemhJson,
+  TriMemhStatus,
+} from "./types";
+import { log } from "./ui/output";
 
 export class TriMemhCliError extends Error {
   constructor(
@@ -14,10 +24,48 @@ export class TriMemhCliError extends Error {
   }
 }
 
+function unwrapJson<T>(value: unknown): T {
+  if (
+    value &&
+    typeof value === "object" &&
+    "success" in value &&
+    "data" in value
+  ) {
+    return (value as TriMemhJson<T>).data;
+  }
+  return value as T;
+}
+
+function parseJsonFromCli<T>(stdout: string): T {
+  const trimmed = stdout.trim();
+  const directStart = trimmed.search(/[\[{]/);
+  const candidates = [trimmed, directStart >= 0 ? trimmed.slice(directStart) : trimmed];
+
+  for (const candidate of candidates) {
+    try {
+      return unwrapJson<T>(JSON.parse(candidate));
+    } catch {}
+  }
+
+  const lines = trimmed.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index++) {
+    const candidate = lines.slice(index).join("\n").trim();
+    if (!(candidate.startsWith("{") || candidate.startsWith("["))) {
+      continue;
+    }
+    try {
+      return unwrapJson<T>(JSON.parse(candidate));
+    } catch {}
+  }
+
+  throw new TriMemhCliError(`triMemh returned invalid JSON. Raw output:\n${stdout.slice(0, 1000)}`, "", null);
+}
+
 export class TriMemhClient {
+  private queue: Promise<unknown> = Promise.resolve();
+
   async status(): Promise<TriMemhStatus> {
-    const response = await this.runJson<TriMemhStatus>(["status"]);
-    return response.data;
+    return this.runJson<TriMemhStatus>(["status"]);
   }
 
   async assembleContext(input: { query?: string; openPaths?: string[] }): Promise<ContextResult> {
@@ -29,18 +77,16 @@ export class TriMemhClient {
     if (input.openPaths?.length) {
       args.push("--paths", input.openPaths.join(","));
     }
-    const response = await this.runJson<ContextResult>(args);
-    return response.data;
+    return this.runJson<ContextResult>(args);
   }
 
   async recall(input: { query: string; limit?: number }): Promise<RecallResult[]> {
-    const response = await this.runJson<RecallResult[]>([
+    return this.runJson<RecallResult[]>([
       "recall",
       input.query,
       "--limit",
       String(input.limit ?? 10),
     ]);
-    return response.data;
   }
 
   async listMemories(input: { kind?: string; status?: string } = {}): Promise<MemoryItem[]> {
@@ -51,36 +97,30 @@ export class TriMemhClient {
     if (input.status) {
       args.push("--status", input.status);
     }
-    const response = await this.runJson<MemoryItem[]>(args);
-    return response.data;
+    return this.runJson<MemoryItem[]>(args);
   }
 
   async remember(input: { kind: string; text: string; confidence?: number }): Promise<MemoryItem> {
-    const args = [
+    return this.runJson<MemoryItem>([
       "remember",
+      input.text,
       "--kind",
       input.kind,
-      "--text",
-      input.text,
       "--confidence",
       String(input.confidence ?? 0.5),
-    ];
-    const response = await this.runJson<MemoryItem>(args);
-    return response.data;
+    ]);
   }
 
   async propose(input: { kind: string; text: string; rationale?: string }): Promise<MemoryProposal> {
-    const args = ["propose", "--kind", input.kind, "--text", input.text, "--by", "vscode"];
+    const args = ["propose", input.text, "--kind", input.kind, "--by", "vscode"];
     if (input.rationale) {
       args.push("--rationale", input.rationale);
     }
-    const response = await this.runJson<MemoryProposal>(args);
-    return response.data;
+    return this.runJson<MemoryProposal>(args);
   }
 
   async approveProposal(id: string): Promise<unknown> {
-    const response = await this.runJson<unknown>(["approve", id]);
-    return response.data;
+    return this.runJson<unknown>(["approve", id]);
   }
 
   async rejectProposal(id: string, note?: string): Promise<MemoryProposal> {
@@ -88,21 +128,77 @@ export class TriMemhClient {
     if (note) {
       args.push("--note", note);
     }
-    const response = await this.runJson<MemoryProposal>(args);
-    return response.data;
+    return this.runJson<MemoryProposal>(args);
   }
 
-  private async runJson<T>(args: string[]): Promise<TriMemhJson<T>> {
-    return this.run([...args, "--json"]);
+  async forgetMemory(id: string): Promise<unknown> {
+    return this.runJson<unknown>(["forget", id]);
   }
 
-  private async run<T>(args: string[]): Promise<TriMemhJson<T>> {
+  async stale(input: {
+    path?: string;
+    symbol?: string;
+    includeLowConfidence?: boolean;
+    conflicts?: boolean;
+    limit?: number;
+  } = {}): Promise<StaleMemoryReport> {
+    const args = ["lifecycle", "stale"];
+    if (input.path) {
+      args.push("--path", input.path);
+    }
+    if (input.symbol) {
+      args.push("--symbol", input.symbol);
+    }
+    if (input.includeLowConfidence) {
+      args.push("--include-low-confidence");
+    }
+    if (input.conflicts === false) {
+      args.push("--no-conflicts");
+    }
+    if (input.limit) {
+      args.push("--limit", String(input.limit));
+    }
+    return this.runJson<StaleMemoryReport>(args);
+  }
+
+  async scanCodebase(): Promise<string> {
+    return this.runText(["scan"]);
+  }
+
+  async atlas(input: { path?: string; symbol?: string; depth?: number } = {}): Promise<AtlasGraph> {
+    const args = ["atlas", "--depth", String(input.depth ?? 2)];
+    if (input.path) {
+      args.push("--path", input.path);
+    }
+    if (input.symbol) {
+      args.push("--symbol", input.symbol);
+    }
+    return this.runJson<AtlasGraph>(args);
+  }
+
+  async runText(args: string[]): Promise<string> {
+    return this.run(args);
+  }
+
+  private async runJson<T>(args: string[]): Promise<T> {
+    const stdout = await this.run([...args, "--json"]);
+    return parseJsonFromCli<T>(stdout);
+  }
+
+  private async run(args: string[]): Promise<string> {
+    const task = this.queue.then(() => this.runNow(args));
+    this.queue = task.catch(() => undefined);
+    return task;
+  }
+
+  private async runNow(args: string[]): Promise<string> {
     const config = getConfig();
     const fullArgs = [...config.args, ...args];
     if (config.dbPath) {
       fullArgs.push("--db", config.dbPath);
     }
 
+    log(`$ ${config.command} ${fullArgs.join(" ")}`);
     const root = workspaceRoot();
     const stdout = await new Promise<string>((resolve, reject) => {
       const child = spawn(config.command, fullArgs, {
@@ -126,19 +222,16 @@ export class TriMemhClient {
           reject(new TriMemhCliError(err || `triMemh exited with code ${code}`, err, code));
           return;
         }
+        if (err.trim()) {
+          log(err.trim());
+        }
         resolve(out);
       });
     });
-
-    try {
-      return JSON.parse(stdout) as TriMemhJson<T>;
-    } catch (error) {
-      throw new TriMemhCliError(
-        `triMemh returned invalid JSON. Raw output:\n${stdout.slice(0, 1000)}`,
-        error instanceof Error ? error.message : String(error),
-        null,
-      );
+    if (stdout.trim()) {
+      log(stdout.trim());
     }
+    return stdout;
   }
 }
 

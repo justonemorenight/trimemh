@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
 import * as vscode from "vscode";
 
 export interface TriMemhExtensionConfig {
@@ -7,6 +10,7 @@ export interface TriMemhExtensionConfig {
   defaultRecallMode: "fts" | "vector" | "hybrid";
   defaultEvidenceMode: "auto" | "off" | "force";
   autoRefreshOnActiveEditorChange: boolean;
+  defaultMemoryWriteMode: "propose" | "remember";
 }
 
 export function getConfig(): TriMemhExtensionConfig {
@@ -19,6 +23,7 @@ export function getConfig(): TriMemhExtensionConfig {
     defaultRecallMode: config.get("defaultRecallMode", "fts"),
     defaultEvidenceMode: config.get("defaultEvidenceMode", "auto"),
     autoRefreshOnActiveEditorChange: config.get("autoRefreshOnActiveEditorChange", false),
+    defaultMemoryWriteMode: config.get("defaultMemoryWriteMode", "propose"),
   };
 }
 
@@ -32,4 +37,20 @@ export function relativeWorkspacePath(uri: vscode.Uri): string {
     return uri.fsPath;
   }
   return vscode.workspace.asRelativePath(uri, false);
+}
+
+export function hasTriMemhSupport(): boolean {
+  const config = getConfig();
+  if (config.dbPath) {
+    return true;
+  }
+  const root = workspaceRoot();
+  if (!root) {
+    return false;
+  }
+  return (
+    existsSync(join(root, ".trimemh")) ||
+    existsSync(join(root, ".claude", "commands", "memh-start.md")) ||
+    existsSync(join(root, ".claude", "commands", "memh-stale.md"))
+  );
 }

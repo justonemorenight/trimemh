@@ -27,6 +27,11 @@ export class TriMemhStatusBar {
     this.item.tooltip = status.project_id ? `Project: ${status.project_id}` : "triMemh connected";
   }
 
+  unsupported(): void {
+    this.item.text = "$(circle-slash) triMemh: not initialized";
+    this.item.tooltip = "This workspace does not appear to have triMemh support (.trimemh or memh commands).";
+  }
+
   error(): void {
     this.item.text = "$(warning) triMemh: error";
   }

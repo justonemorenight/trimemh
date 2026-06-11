@@ -2,9 +2,22 @@
   "name": "trimemh-vscode",
   "displayName": "triMemh",
   "description": "VSCode UI for triMemh local-first memory management.",
+  "icon": "media/trimemh-logo-128.png",
   "version": "0.1.0",
   "publisher": "trimemh",
   "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/justonemorenight/trimemh"
+  },
+  "files": [
+    "dist/**",
+    "media/**",
+    "LICENSE",
+    "README.md",
+    "package.json"
+  ],
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -14,9 +27,22 @@
     "onCommand:trimemh.refresh",
     "onCommand:trimemh.searchMemories",
     "onCommand:trimemh.rememberSelection",
+    "onCommand:trimemh.proposeSelection",
+    "onCommand:trimemh.checkStale",
+    "onCommand:trimemh.checkStaleWorkspace",
+    "onCommand:trimemh.scanCodebase",
+    "onCommand:trimemh.showLog",
+    "onCommand:trimemh.memory.showDetail",
+    "onCommand:trimemh.memory.forget",
     "onView:trimemh.dashboard",
     "onView:trimemh.proposals",
-    "onView:trimemh.memories"
+    "onView:trimemh.memories",
+    "onView:trimemh.stale",
+    "onView:trimemh.atlas",
+    "onCommand:trimemh.openAtlas",
+    "onCommand:trimemh.focusAtlasOnCurrentFile",
+    "onCommand:trimemh.atlas.refresh",
+    "onCommand:trimemh.atlas.fit"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -37,6 +63,11 @@
           "name": "Dashboard"
         },
         {
+          "type": "webview",
+          "id": "trimemh.atlas",
+          "name": "Atlas"
+        },
+        {
           "type": "tree",
           "id": "trimemh.proposals",
           "name": "Pending Proposals"
@@ -45,6 +76,11 @@
           "type": "tree",
           "id": "trimemh.memories",
           "name": "Active Memories"
+        },
+        {
+          "type": "tree",
+          "id": "trimemh.stale",
+          "name": "Stale Memory"
         }
       ]
     },
@@ -53,6 +89,22 @@
         "command": "trimemh.refresh",
         "title": "triMemh: Refresh",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "trimemh.openAtlas",
+        "title": "triMemh: Open Atlas"
+      },
+      {
+        "command": "trimemh.focusAtlasOnCurrentFile",
+        "title": "triMemh: Focus Atlas on Current File"
+      },
+      {
+        "command": "trimemh.atlas.refresh",
+        "title": "triMemh: Refresh Atlas"
+      },
+      {
+        "command": "trimemh.atlas.fit",
+        "title": "triMemh: Fit Atlas"
       },
       {
         "command": "trimemh.refreshContext",
@@ -69,6 +121,36 @@
       {
         "command": "trimemh.rememberSelection",
         "title": "triMemh: Remember Selection"
+      },
+      {
+        "command": "trimemh.proposeSelection",
+        "title": "triMemh: Propose Selection"
+      },
+      {
+        "command": "trimemh.checkStale",
+        "title": "triMemh: Check Stale Memory for Current File",
+        "icon": "$(warning)"
+      },
+      {
+        "command": "trimemh.checkStaleWorkspace",
+        "title": "triMemh: Check Stale Memory for Workspace"
+      },
+      {
+        "command": "trimemh.scanCodebase",
+        "title": "triMemh: Scan Codebase"
+      },
+      {
+        "command": "trimemh.showLog",
+        "title": "triMemh: Show Log"
+      },
+      {
+        "command": "trimemh.memory.showDetail",
+        "title": "triMemh: Show Memory Detail"
+      },
+      {
+        "command": "trimemh.memory.forget",
+        "title": "triMemh: Forget Memory",
+        "icon": "$(trash)"
       },
       {
         "command": "trimemh.proposal.approve",
@@ -99,8 +181,18 @@
           "group": "inline"
         },
         {
+          "command": "trimemh.memory.showDetail",
+          "when": "view == trimemh.memories || view == trimemh.stale",
+          "group": "inline"
+        },
+        {
+          "command": "trimemh.memory.forget",
+          "when": "view == trimemh.memories",
+          "group": "inline"
+        },
+        {
           "command": "trimemh.copyId",
-          "when": "view == trimemh.proposals || view == trimemh.memories",
+          "when": "view == trimemh.proposals || view == trimemh.memories || view == trimemh.stale",
           "group": "navigation"
         }
       ]
@@ -116,7 +208,9 @@
         "trimemh.args": {
           "type": "array",
           "default": [],
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Arguments prepended before the triMemh subcommand, e.g. ['run', 'src/cli.ts'] when trimemh.command is 'bun'."
         },
         "trimemh.dbPath": {
@@ -140,6 +234,12 @@
           "type": "boolean",
           "default": false,
           "description": "Refresh the dashboard when the active editor changes. Disabled by default to avoid frequent CLI runs."
+        },
+        "trimemh.defaultMemoryWriteMode": {
+          "type": "string",
+          "enum": ["propose", "remember"],
+          "default": "propose",
+          "description": "Default action for selected text: propose for review or remember directly."
         }
       }
     }
@@ -151,6 +251,7 @@
   "devDependencies": {
     "@types/node": "^20.17.0",
     "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.9.2",
     "typescript": "^5.9.3"
   }
 }

@@ -15,15 +15,35 @@
 
 ## Why triMemh?
 
-AI coding agents generate enormous amounts of context. Every tool call, every file read, every search result — it all competes for limited context window space. As your project grows, your agent forgets. It repeats mistakes. It loses track of decisions made last session.
+AI coding agents need trustworthy project memory. Forgetting context is costly, but stale memory is worse: an agent can confidently follow old project knowledge after the code has changed.
 
-**triMemh** solves this by giving agents a persistent, compressed, self-improving memory that lives on your machine.
+**triMemh** keeps AI coding agents' project memory durable, reviewable, and up to date. It stores local memory, links it to code, and detects context rot such as missing files, removed symbols, changed fingerprints, and conflicting decisions.
 
 - **93% fewer tokens** in the context window — proven across real-world scenarios
 - **Zero cloud dependencies** — everything runs locally on SQLite + Bun
 - **Governance-first** — every memory change goes through approval flows
+- **Context-rot detection** — flag stale memories when linked files, symbols, or fingerprints change
 - **Cross-agent** — share knowledge between Claude Code, Cursor, Codex, Copilot CLI, and Aider
 - **Self-improving** — agents rate memory usefulness; the system learns what matters
+
+## Trustworthy Memory, Not Just More Memory
+
+Forgetting project context is annoying. **Stale memory is dangerous**: an AI coding agent can confidently follow old project knowledge after the code has changed.
+
+```bash
+bun scripts/demo-stale-memory.ts
+```
+
+```text
+1/1 flagged (high=1, medium=0, low=0)
+
+[high] code_context action=update_link
+- missing_symbol: Linked code entity no longer exists: /tmp/trimemh-stale-memory-demo/src/auth.ts#validateSession
+```
+
+triMemh treats stale memory as a correctness bug. It links memories to code and flags context rot before agents rely on it: missing files, removed symbols, changed fingerprints, and conflicting decisions.
+
+Learn more in [Stale Memory Detection](docs/stale-memory.md). The VS Code extension also includes an Atlas view for interactive memory-code graph navigation. A visual workflow is available in the [VS Code extension](editors/code/README.md).
 
 ## Quick Start
 
@@ -124,6 +144,7 @@ Stale memory is a correctness bug: if project knowledge points at a deleted file
 triMemh can detect obvious context-rot signals dynamically from the current working tree and memory graph:
 
 ```bash
+bun scripts/demo-stale-memory.ts
 trimemh lifecycle stale --path src/auth.ts
 trimemh lifecycle stale --path src/auth.ts --json
 ```

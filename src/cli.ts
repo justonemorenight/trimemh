@@ -3,6 +3,7 @@
 import { Command } from "commander";
 
 import { formatInitResult, initProject } from "./application/init-use-cases";
+import { registerAtlasCommand } from "./cli/atlas-command";
 import { registerContextCommand } from "./cli/context-command";
 import { registerDedupCommand } from "./cli/dedup-command";
 import { registerEvalCommand } from "./cli/eval-command";
@@ -35,6 +36,7 @@ program
   .version("0.1.0");
 
 // Register command groups from sub-modules
+registerAtlasCommand(program);
 registerMemoryCommands(program);
 registerProposalCommands(program);
 registerDedupCommand(program);
