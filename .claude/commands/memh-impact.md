@@ -8,7 +8,7 @@ See which memories are linked to the files you're working on.
 2. Call `memory_code_impact` for each relevant file path.
 3. Show linked memories grouped by relation type: `documents`, `warns_about`, `implements`, `depends_on`.
 4. Show related memories from the memory graph (neighbors of linked memories).
-5. Flag any memories that seem **stale** or contradicted by current code.
+5. Call `memory_stale_detect` for the same file path (and symbol if known) to flag memories that are stale or contradicted by current code.
 6. Suggest new code links if appropriate using `memory_code_link_propose`.
 
 ## Key Rules

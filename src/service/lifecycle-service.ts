@@ -1,18 +1,33 @@
 import type { Database } from "bun:sqlite";
+import { existsSync, readFileSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
 
 import { v4 as uuidv4 } from "uuid";
 
 import { recall } from "../application/recall-use-cases";
-import type { MemoryItem, MemoryKind } from "../domain/schema";
+import { parseFile } from "../code-intel/code-parser";
+import type {
+  CodeEntity,
+  MemoryItem,
+  MemoryKind,
+  StaleMemoryAction,
+  StaleMemoryReason,
+  StaleMemoryReasonDetail,
+  StaleMemoryReport,
+  StaleMemoryResult,
+  StaleMemorySeverity,
+} from "../domain/schema";
 import type {
   LifecycleEntityType,
   LifecycleState,
   MemoryLifecycleEvent,
 } from "../persistence/repository";
 import {
+  getCodeEntitiesForMemoryRows,
   getMemoryById,
   insertLifecycleEvent,
   latestLifecycleState,
+  listCodeEntitiesForPath,
   listLifecycleEvents,
   listMemoryItems,
   updateMemoryItem,
@@ -74,6 +89,17 @@ export interface ConflictCandidate {
   score: number;
   reasons: string[];
 }
+
+export interface DetectStaleMemoriesInput {
+  projectId: string;
+  path?: string;
+  symbol?: string;
+  includeConflicts?: boolean;
+  includeLowConfidence?: boolean;
+  limit?: number;
+}
+
+const SEVERITY_RANK: Record<StaleMemorySeverity, number> = { low: 1, medium: 2, high: 3 };
 
 const NEGATION_RE = /\b(no|not|never|without|instead|avoid|disable|remove|replace|deprecated)\b/i;
 const TOKEN_SPLIT_RE = /\s+/;
@@ -251,6 +277,217 @@ export function supersedeMemory(db: Database, input: SupersedeMemoryInput): Supe
   );
 
   return { status: "superseded", oldMemory: updatedOld, newMemory };
+}
+
+function resolveCodePath(path: string): string {
+  return isAbsolute(path) ? path : resolve(process.cwd(), path);
+}
+
+function strongerSeverity(
+  current: StaleMemorySeverity,
+  next: StaleMemorySeverity,
+): StaleMemorySeverity {
+  return SEVERITY_RANK[next] > SEVERITY_RANK[current] ? next : current;
+}
+
+function actionForReasons(reasons: StaleMemoryReason[]): StaleMemoryAction {
+  if (reasons.includes("memory_conflict")) {
+    return "supersede";
+  }
+  if (reasons.includes("missing_file") || reasons.includes("missing_symbol")) {
+    return "update_link";
+  }
+  if (reasons.includes("fingerprint_mismatch") || reasons.includes("low_confidence")) {
+    return "review";
+  }
+  return "none";
+}
+
+function addStaleReason(
+  findings: Map<string, StaleMemoryResult>,
+  memory: MemoryItem,
+  severity: StaleMemorySeverity,
+  reason: StaleMemoryReasonDetail,
+): void {
+  const existing = findings.get(memory.id);
+  if (!existing) {
+    findings.set(memory.id, {
+      memory,
+      severity,
+      suggested_action: actionForReasons([reason.reason]),
+      reasons: [reason],
+    });
+    return;
+  }
+  existing.severity = strongerSeverity(existing.severity, severity);
+  existing.reasons.push(reason);
+  existing.suggested_action = actionForReasons(existing.reasons.map((entry) => entry.reason));
+}
+
+function currentEntityFor(entity: CodeEntity): CodeEntity | null {
+  const absolutePath = resolveCodePath(entity.path);
+  if (!existsSync(absolutePath)) {
+    return null;
+  }
+  const parsed = parseFile(entity.path, readFileSync(absolutePath, "utf8"));
+  const current = parsed.entities.find(
+    (entry) =>
+      entry.entityType === entity.entity_type && entry.symbol === (entity.symbol ?? entry.symbol),
+  );
+  if (!current) {
+    return null;
+  }
+  return {
+    ...entity,
+    symbol: current.symbol,
+    line_start: current.lineStart,
+    line_end: current.lineEnd,
+    fingerprint: current.fingerprint,
+  };
+}
+
+export function detectStaleMemories(
+  db: Database,
+  input: DetectStaleMemoriesInput,
+): StaleMemoryReport {
+  const limit = input.limit ?? 20;
+  const includeConflicts = input.includeConflicts ?? true;
+  const includeLowConfidence = input.includeLowConfidence ?? false;
+  const activeMemories = listMemoryItems(db, input.projectId, { status: "active", limit: 1000 });
+  const activeById = new Map(activeMemories.map((item) => [item.id, item]));
+  const findings = new Map<string, StaleMemoryResult>();
+
+  const linkedRows = input.path
+    ? getCodeEntitiesForMemoryRows(
+        db,
+        input.projectId,
+        getMemoriesForLinkedEntities(db, input.projectId, input.path, input.symbol),
+      )
+    : getCodeEntitiesForMemoryRows(
+        db,
+        input.projectId,
+        activeMemories.map((item) => item.id),
+      );
+
+  for (const row of linkedRows) {
+    const memory = activeById.get(row.memoryId);
+    if (!memory) {
+      continue;
+    }
+    const entity = row.entity;
+    const link = row.link;
+    const absolutePath = resolveCodePath(entity.path);
+    if (!existsSync(absolutePath)) {
+      addStaleReason(findings, memory, "high", {
+        reason: "missing_file",
+        description: `Linked file no longer exists: ${entity.path}`,
+        entity,
+        link,
+      });
+      continue;
+    }
+
+    const current = currentEntityFor(entity);
+    if (!current) {
+      addStaleReason(findings, memory, "high", {
+        reason: "missing_symbol",
+        description: `Linked code entity no longer exists: ${entity.path}${entity.symbol ? `#${entity.symbol}` : ""}`,
+        entity,
+        link,
+      });
+      continue;
+    }
+
+    if (entity.fingerprint && current.fingerprint && entity.fingerprint !== current.fingerprint) {
+      addStaleReason(findings, memory, "medium", {
+        reason: "fingerprint_mismatch",
+        description: `Linked code entity changed: ${entity.path}${entity.symbol ? `#${entity.symbol}` : ""}`,
+        entity,
+        link,
+        details: {
+          previous_fingerprint: entity.fingerprint,
+          current_fingerprint: current.fingerprint,
+        },
+      });
+    }
+  }
+
+  if (includeConflicts) {
+    for (const memory of activeMemories) {
+      const conflicts = detectMemoryConflicts(db, {
+        projectId: input.projectId,
+        kind: memory.kind,
+        text: memory.text,
+        limit: 5,
+      }).filter((candidate) => candidate.memory.id !== memory.id);
+      if (conflicts.length > 0) {
+        addStaleReason(findings, memory, "medium", {
+          reason: "memory_conflict",
+          description: `Memory may conflict with ${conflicts.length} active memory item(s).`,
+          details: {
+            conflicts: conflicts.map((candidate) => ({
+              memory_id: candidate.memory.id,
+              score: candidate.score,
+              reasons: candidate.reasons,
+            })),
+          },
+        });
+      }
+    }
+  }
+
+  if (includeLowConfidence) {
+    for (const memory of activeMemories) {
+      if (memory.confidence < 0.25) {
+        addStaleReason(findings, memory, "low", {
+          reason: "low_confidence",
+          description: `Memory confidence is low (${memory.confidence}).`,
+          details: { confidence: memory.confidence },
+        });
+      }
+    }
+  }
+
+  const results = [...findings.values()]
+    .sort((a, b) => {
+      const severityDiff = SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity];
+      return (
+        severityDiff ||
+        b.reasons.length - a.reasons.length ||
+        a.memory.created_at.localeCompare(b.memory.created_at)
+      );
+    })
+    .slice(0, limit);
+
+  return {
+    checked_at: now(),
+    results,
+    summary: {
+      checked_memory_count: activeMemories.length,
+      flagged_memory_count: results.length,
+      high_count: results.filter((result) => result.severity === "high").length,
+      medium_count: results.filter((result) => result.severity === "medium").length,
+      low_count: results.filter((result) => result.severity === "low").length,
+    },
+  };
+}
+
+function getMemoriesForLinkedEntities(
+  db: Database,
+  projectId: string,
+  path: string,
+  symbol?: string,
+): string[] {
+  const entities = listCodeEntitiesForPath(db, projectId, path, symbol);
+  const rows = getCodeEntitiesForMemoryRows(
+    db,
+    projectId,
+    listMemoryItems(db, projectId, { status: "active", limit: 1000 }).map((item) => item.id),
+  );
+  const entityIds = new Set(entities.map((entity) => entity.id));
+  return [
+    ...new Set(rows.filter((row) => entityIds.has(row.entity.id)).map((row) => row.memoryId)),
+  ];
 }
 
 function tokenSet(text: string): Set<string> {

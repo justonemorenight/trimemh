@@ -5,6 +5,7 @@ import { MEMORY_KINDS } from "../domain/schema";
 import type { LifecycleEntityType, LifecycleState } from "../persistence/repository";
 import {
   detectMemoryConflicts,
+  detectStaleMemories,
   expireMemories,
   lifecycleEvents,
   supersedeMemory,
@@ -183,6 +184,46 @@ export function registerLifecycleCommand(program: Command): void {
               );
               console.log(candidate.memory.text);
               console.log();
+            }
+          }),
+        ),
+    )
+    .addCommand(
+      new Command("stale")
+        .description("Detect potentially stale active memories")
+        .option("--path <path>", "Only check memories linked to a code path")
+        .option("--symbol <symbol>", "Only check memories linked to a symbol")
+        .option("--include-low-confidence", "Flag low-confidence active memories")
+        .option("--no-conflicts", "Skip memory conflict checks")
+        .option("--limit <number>", "Max findings", "20")
+        .option("--json", "Print JSON")
+        .option("--db <path>", "Custom database path")
+        .action(
+          withDb((db, config, opts) => {
+            const report = detectStaleMemories(db, {
+              projectId: config.projectId,
+              path: opts.path,
+              symbol: opts.symbol,
+              includeConflicts: opts.conflicts,
+              includeLowConfidence: opts.includeLowConfidence ?? false,
+              limit: parsePositiveInteger(opts.limit, "--limit"),
+            });
+            if (opts.json) {
+              console.log(JSON.stringify(report, null, 2));
+              return;
+            }
+            console.log(
+              `stale: ${report.summary.flagged_memory_count}/${report.summary.checked_memory_count} flagged ` +
+                `(high=${report.summary.high_count}, medium=${report.summary.medium_count}, low=${report.summary.low_count})`,
+            );
+            for (const result of report.results) {
+              console.log(
+                `\n${result.memory.id} | ${result.memory.kind} | ${result.severity} | action=${result.suggested_action}`,
+              );
+              console.log(result.memory.text.slice(0, 180));
+              for (const reason of result.reasons) {
+                console.log(`- ${reason.reason}: ${reason.description}`);
+              }
             }
           }),
         ),

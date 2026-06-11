@@ -40,6 +40,7 @@ export {
 export {
   MEMORY_LIFECYCLE_STATES,
   detectMemoryConflicts,
+  detectStaleMemories,
   expireMemories,
   latestLifecycle,
   lifecycleEvents,

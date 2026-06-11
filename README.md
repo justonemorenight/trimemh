@@ -117,6 +117,19 @@ When the runtime assembles prompt context, it uses task-aware budgets, evidence-
               └─────────────┘
 ```
 
+## Prevent Context Rot
+
+Stale memory is a correctness bug: if project knowledge points at a deleted file, removed symbol, changed implementation, or conflicting decision, an agent can confidently make the wrong change.
+
+triMemh can detect obvious context-rot signals dynamically from the current working tree and memory graph:
+
+```bash
+trimemh lifecycle stale --path src/auth.ts
+trimemh lifecycle stale --path src/auth.ts --json
+```
+
+Agents can also use `/memh-stale` or the MCP tool `memory_stale_detect` before relying on project memory after code changes. The detector flags broken code links, missing symbols, fingerprint mismatches, memory conflicts, and optional low-confidence memories. It reports suggested actions such as `review`, `update_link`, or `supersede`, but does not auto-delete or archive memories.
+
 ## Performance
 
 Measured with realistic local workloads that exercise the compression pipeline, context assembly, retrieval, and local HTTP transport.
@@ -219,6 +232,7 @@ trimemh session history --agent claude-code
 trimemh session registry --agent codex
 trimemh lifecycle list --entity-type memory_proposal --entity-id <proposal-id>
 trimemh lifecycle conflicts --kind decision --text "Use Codex hooks only for summaries"
+trimemh lifecycle stale --path src/auth.ts --json
 trimemh lifecycle expire --before 2026-06-07T00:00:00.000Z --dry-run
 trimemh lifecycle supersede <old-memory-id> <new-memory-id>
 trimemh review plan --input plan.md --dry-run
@@ -256,7 +270,7 @@ trimemh benchmark                      # Run token compression benchmark
 
 ## MCP Tools
 
-triMemh exposes 15 MCP tools that agents use automatically:
+triMemh exposes 16 MCP tools that agents use automatically:
 
 | Tool | Description | Example |
 |---|---|---|
@@ -273,6 +287,7 @@ triMemh exposes 15 MCP tools that agents use automatically:
 | `memory_stats` | Memory usage statistics | `memory_stats()` |
 | `memory_code_search` | Search by file path or symbol | `memory_code_search(path="src/auth.ts")` |
 | `memory_code_impact` | Memory-backed impact radius for a code path | `memory_code_impact(path="src/auth.ts", depth=2)` |
+| `memory_stale_detect` | Detect context rot: broken links, missing symbols, changed fingerprints, conflicts | `memory_stale_detect(path="src/auth.ts")` |
 | `memory_link_propose` | Propose link between memories | `memory_link_propose(source, target, relation="related_to")` |
 | `memory_code_link_propose` | Propose memory ↔ code entity link | `memory_code_link_propose("mem_abc", "src/auth.ts")` |
 

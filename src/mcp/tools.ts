@@ -20,6 +20,7 @@ import { applyFeedback } from "../retrieval/feedback";
 import {
   approve,
   closeSession,
+  detectStaleMemories,
   formatProjectMismatchWarnings,
   formatProposalResultExtras,
   getCodeImpact,
@@ -55,6 +56,7 @@ import {
   RetrieveInputSchema,
   SearchInputSchema,
   SessionCloseInputSchema,
+  StaleDetectInputSchema,
 } from "./schemas";
 
 type TextContent = { type: "text"; text: string };
@@ -1029,6 +1031,57 @@ export function registerMemoryTools(
             {
               type: "text" as const,
               text: guardOutput(`Session close error: ${(err as Error).message}`),
+            },
+          ],
+          isError: true,
+        };
+      }
+    },
+  );
+
+  server.registerTool(
+    "memory_stale_detect",
+    {
+      description:
+        "Detect potentially stale active memories caused by context rot: missing linked files, missing symbols, changed code fingerprints, memory conflicts, or low confidence. Use before relying on project memory after code changes.",
+      inputSchema: StaleDetectInputSchema,
+    },
+    // biome-ignore lint/suspicious/useAwait: warning suppression
+    async (params) => {
+      const rl = checkRateLimit(rateLimiter, "memory_stale_detect");
+      if (!rl.allowed) {
+        return rateLimitError(rl.retryAfter);
+      }
+
+      try {
+        const report = detectStaleMemories(db, {
+          projectId,
+          path: params.path,
+          symbol: params.symbol,
+          includeConflicts: params.include_conflicts,
+          includeLowConfidence: params.include_low_confidence,
+          limit: params.limit,
+        });
+        const findings = report.results
+          .map((result) => {
+            const reasons = result.reasons
+              .map((reason) => `    - ${reason.reason}: ${reason.description}`)
+              .join("\n");
+            return `- [${result.memory.id.slice(0, CONFIG.mcp.shortIdLength)}] ${result.severity} | ${result.memory.kind} | action=${result.suggested_action}\n  ${result.memory.text.slice(0, CONFIG.mcp.snippetLength)}\n${reasons}`;
+          })
+          .join("\n\n");
+        const text = [
+          `Stale memory report: ${report.summary.flagged_memory_count}/${report.summary.checked_memory_count} flagged`,
+          `high=${report.summary.high_count} medium=${report.summary.medium_count} low=${report.summary.low_count}`,
+          findings ? `\nFindings:\n${findings}` : "\nFindings: none",
+        ].join("\n");
+        return { content: [{ type: "text" as const, text: guardOutput(text) }] };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: guardOutput(`Stale detection error: ${(err as Error).message}`),
             },
           ],
           isError: true,

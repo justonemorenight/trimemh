@@ -37,6 +37,21 @@ export const CODE_LINK_RELATIONS = [
   "depends_on",
 ] as const;
 export const LINK_PROPOSAL_TYPES = ["memory_edge", "memory_code_link"] as const;
+export const STALE_MEMORY_REASONS = [
+  "missing_file",
+  "missing_symbol",
+  "fingerprint_mismatch",
+  "memory_conflict",
+  "low_confidence",
+] as const;
+export const STALE_MEMORY_SEVERITIES = ["low", "medium", "high"] as const;
+export const STALE_MEMORY_ACTIONS = [
+  "review",
+  "update_link",
+  "supersede",
+  "expire",
+  "none",
+] as const;
 
 export type MemoryKind = (typeof MEMORY_KINDS)[number];
 export type MemoryStatus = (typeof MEMORY_STATUSES)[number];
@@ -48,6 +63,9 @@ export type MemoryEdgeRelation = (typeof MEMORY_EDGE_RELATIONS)[number];
 export type CodeEntityType = (typeof CODE_ENTITY_TYPES)[number];
 export type CodeLinkRelation = (typeof CODE_LINK_RELATIONS)[number];
 export type LinkProposalType = (typeof LINK_PROPOSAL_TYPES)[number];
+export type StaleMemoryReason = (typeof STALE_MEMORY_REASONS)[number];
+export type StaleMemorySeverity = (typeof STALE_MEMORY_SEVERITIES)[number];
+export type StaleMemoryAction = (typeof STALE_MEMORY_ACTIONS)[number];
 
 // ─── Risk mapping: kind → default risk level ─────────────────────
 
@@ -372,6 +390,33 @@ export interface CodeImpactResult {
     linked_memory_count: number;
     related_memory_count: number;
     affected_path_count: number;
+  };
+}
+
+export interface StaleMemoryReasonDetail {
+  reason: StaleMemoryReason;
+  description: string;
+  entity?: CodeEntity;
+  link?: MemoryCodeLink;
+  details?: Record<string, unknown>;
+}
+
+export interface StaleMemoryResult {
+  memory: MemoryItem;
+  severity: StaleMemorySeverity;
+  suggested_action: StaleMemoryAction;
+  reasons: StaleMemoryReasonDetail[];
+}
+
+export interface StaleMemoryReport {
+  checked_at: string;
+  results: StaleMemoryResult[];
+  summary: {
+    checked_memory_count: number;
+    flagged_memory_count: number;
+    high_count: number;
+    medium_count: number;
+    low_count: number;
   };
 }
 

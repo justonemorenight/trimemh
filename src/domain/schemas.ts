@@ -181,6 +181,22 @@ export const CodeImpactSchema = z.object({
   depth: z.number().int().min(1).max(2).default(1).describe("Memory graph traversal depth"),
 });
 
+// ─── memory_stale_detect ───────────────────────────────────────────
+
+export const StaleDetectSchema = z.object({
+  path: pathField.optional().describe("Optional code path to limit stale detection"),
+  symbol: symbolField.optional().describe("Optional symbol to limit stale detection"),
+  include_conflicts: z.boolean().optional().default(true).describe("Check active memory conflicts"),
+  include_low_confidence: z
+    .boolean()
+    .optional()
+    .default(false)
+    .describe("Flag low-confidence active memories"),
+  limit: z.number().int().min(1).max(100).default(20).describe("Max stale findings to return"),
+});
+
+export type StaleDetectInput = z.infer<typeof StaleDetectSchema>;
+
 // ─── memory_retrieve ───────────────────────────────────────────────
 
 export const RetrieveSchema = z.object({
