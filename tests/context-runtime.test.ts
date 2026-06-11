@@ -4,6 +4,7 @@ import { unlinkSync } from "node:fs";
 
 import { assembleMemoryContext, createRuntimeContextState } from "../src/context/context-runtime";
 import { closeDb, getDb, runMigrations } from "../src/persistence/db";
+import { getAuditEvents } from "../src/persistence/repository";
 import { createMemoryCodeLink, mcpRetrieveFull, remember } from "../src/service";
 
 const TEST_DB = "/tmp/memh-test-context-runtime.sqlite";
@@ -263,5 +264,157 @@ describe("context-runtime.ts — runtime injection loop", () => {
     const retrieved = mcpRetrieveFull(db, PROJECT, memory.id);
     expect(retrieved?.retrieval_context).toContain("runtimechunkneedle");
     expect(retrieved?.retrieval_context).toContain("--- FULL TEXT");
+  });
+
+  it("preserves critical error markers when compressed log output would lose them", () => {
+    const logText = [
+      "command: bun test tests/payment.test.ts",
+      "stdout: starting payment suite",
+      "stderr: ERROR PaymentProcessorError: card token rejected",
+      "Traceback src/payment.ts:42",
+      "Caused by gateway timeout",
+      ...Array.from(
+        { length: 80 },
+        (_, index) => `INFO filler log line ${index} requestId=req-${index} latency=${index}ms`,
+      ),
+      "exit code 1",
+    ].join("\n");
+
+    const memory = remember(db, {
+      kind: "tooling",
+      text: logText,
+      projectId: PROJECT,
+      source: "cli:user:explicit",
+    });
+
+    createMemoryCodeLink(db, {
+      projectId: PROJECT,
+      memoryId: memory.id,
+      path: "logs/payment-test.log",
+      entityType: "file",
+      relation: "documents",
+      source: "test",
+    });
+
+    const assembled = assembleMemoryContext({
+      db,
+      projectId: PROJECT,
+      query: "debug PaymentProcessorError gateway timeout",
+      openPaths: ["logs/payment-test.log"],
+      modelContextTokens: 8_000,
+      memoryContextBudgetRatio: 0.5,
+      state: createRuntimeContextState(),
+    });
+
+    expect(assembled.selectedDetailIds).toContain(memory.id);
+    expect(assembled.xml).toContain("ERROR");
+    expect(assembled.xml).toContain("PaymentProcessorError");
+    expect(assembled.xml).toContain("Traceback");
+    expect(assembled.xml).toContain("exit code");
+  });
+
+  it("guards library and generated content instead of injecting raw blobs", () => {
+    const generatedText = [
+      "// DO NOT EDIT: generated bundle",
+      "export const generatedBundle = true;",
+      "A".repeat(1200),
+    ].join("\n");
+
+    const memory = remember(db, {
+      kind: "code_context",
+      text: generatedText,
+      projectId: PROJECT,
+      source: "cli:user:explicit",
+      metadata: { path: "node_modules/example/dist/index.min.js" },
+    });
+
+    createMemoryCodeLink(db, {
+      projectId: PROJECT,
+      memoryId: memory.id,
+      path: "node_modules/example/dist/index.min.js",
+      entityType: "file",
+      relation: "documents",
+      source: "test",
+    });
+
+    const assembled = assembleMemoryContext({
+      db,
+      projectId: PROJECT,
+      query: "generated bundle example",
+      openPaths: ["node_modules/example/dist/index.min.js"],
+      modelContextTokens: 8_000,
+      memoryContextBudgetRatio: 0.5,
+      state: createRuntimeContextState(),
+    });
+
+    expect(assembled.selectedDetailIds).toContain(memory.id);
+    expect(assembled.xml).toContain("compression guard: library/generated content omitted");
+    expect(assembled.xml).toContain("memory_retrieve");
+    expect(assembled.xml).not.toContain("A".repeat(500));
+  });
+
+  it("records memory_retrieve audit events and reports re-served compression waste", () => {
+    const longText = [
+      "ERROR ReservedWasteError: reservedwasteneedle needs full retrieval",
+      ...Array.from(
+        { length: 90 },
+        (_, index) =>
+          `INFO reservedwasteneedle retrieval waste log line ${index} requestId=req-${index} latency=${index}ms`,
+      ),
+      "exit code 1",
+    ].join("\n");
+
+    const memory = remember(db, {
+      kind: "tooling",
+      text: longText,
+      projectId: PROJECT,
+      source: "cli:user:explicit",
+    });
+    createMemoryCodeLink(db, {
+      projectId: PROJECT,
+      memoryId: memory.id,
+      path: "logs/reserved-waste.log",
+      entityType: "file",
+      relation: "documents",
+      source: "test",
+    });
+
+    const first = assembleMemoryContext({
+      db,
+      projectId: PROJECT,
+      query: "debug reservedwasteneedle retrieval waste",
+      openPaths: ["logs/reserved-waste.log"],
+      modelContextTokens: 8_000,
+      memoryContextBudgetRatio: 0.5,
+      state: createRuntimeContextState(),
+    });
+
+    expect(first.deferredDetails.some((detail) => detail.memoryId === memory.id)).toBe(true);
+    expect(first.contextAccuracySignals.reServedRetrievedCount).toBe(0);
+
+    const retrieved = mcpRetrieveFull(db, PROJECT, memory.id);
+    expect(retrieved?.retrieval_context).toContain("reservedwasteneedle");
+
+    const second = assembleMemoryContext({
+      db,
+      projectId: PROJECT,
+      query: "debug reservedwasteneedle retrieval waste",
+      openPaths: ["logs/reserved-waste.log"],
+      modelContextTokens: 8_000,
+      memoryContextBudgetRatio: 0.5,
+      state: createRuntimeContextState(),
+    });
+
+    expect(second.contextAccuracySignals.reServedRetrievedCount).toBe(1);
+    expect(second.contextAccuracySignals.reServedRetrievedIds).toContain(memory.id);
+    expect(second.contextAccuracySignals.overCompressionWasteTokens).toBeGreaterThan(0);
+
+    const events = getAuditEvents(db, PROJECT, 20);
+    expect(
+      events.some(
+        (event) => event.event_type === "memory_retrieve" && event.entity_id === memory.id,
+      ),
+    ).toBe(true);
+    expect(events.some((event) => event.event_type === "over_compression_waste")).toBe(true);
   });
 });

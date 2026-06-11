@@ -1,8 +1,9 @@
 import type { Database } from "bun:sqlite";
+import { randomUUID } from "node:crypto";
 
 import { CONFIG } from "../config";
 import type { MemoryItem } from "../domain/schema";
-import { getAuditEvents, listPendingProposals } from "../persistence/repository";
+import { getAuditEvents, insertAuditEvent, listPendingProposals } from "../persistence/repository";
 import { embedText } from "../retrieval/embedding-provider";
 import { vectorSearch } from "../retrieval/hybrid";
 import { getMemoriesForCode, listAll } from "../service";
@@ -318,6 +319,70 @@ function lineageForIds(
     .filter((entry): entry is MemoryLineageInput => entry !== null);
 }
 
+function reServedRetrievalWaste(input: {
+  deferredDetails: DeferredDetail[];
+  auditEvents: ReturnType<typeof getAuditEvents>;
+}): { count: number; ids: string[]; tokens: number; retrieveCounts: Record<string, number> } {
+  const retrieveCounts = new Map<string, number>();
+  for (const event of input.auditEvents) {
+    if (event.event_type !== "memory_retrieve" || event.entity_type !== "memory_item") {
+      continue;
+    }
+    retrieveCounts.set(event.entity_id, (retrieveCounts.get(event.entity_id) ?? 0) + 1);
+  }
+
+  const ids: string[] = [];
+  let tokens = 0;
+  for (const detail of input.deferredDetails) {
+    if (!retrieveCounts.has(detail.memoryId)) {
+      continue;
+    }
+    ids.push(detail.memoryId);
+    tokens += detail.tokenSaved;
+  }
+
+  return {
+    count: ids.length,
+    ids,
+    tokens,
+    retrieveCounts: Object.fromEntries(ids.map((id) => [id, retrieveCounts.get(id) ?? 0])),
+  };
+}
+
+function auditOverCompressionWaste(input: {
+  db: Database;
+  projectId: string;
+  policyId: string;
+  ids: string[];
+  tokens: number;
+  retrieveCounts: Record<string, number>;
+}): void {
+  if (input.ids.length === 0) {
+    return;
+  }
+
+  try {
+    const timestamp = new Date().toISOString();
+    insertAuditEvent(input.db, {
+      id: randomUUID(),
+      project_id: input.projectId,
+      actor: "context:compression",
+      event_type: "over_compression_waste",
+      entity_type: "compression_policy",
+      entity_id: input.policyId,
+      payload_json: JSON.stringify({
+        memory_ids: input.ids,
+        over_compression_waste_tokens: input.tokens,
+        retrieve_counts: input.retrieveCounts,
+        timestamp,
+      }),
+      created_at: timestamp,
+    });
+  } catch {
+    // Context assembly should not fail because telemetry could not be recorded.
+  }
+}
+
 function renderContextXml(
   state: PromptContextState,
   projectId: string,
@@ -473,12 +538,29 @@ export function assembleMemoryContext(input: AssembleContextInput): AssembledCon
   const ccrStore = getCcrStore();
   const deferredDetails = [...ccrStore.deferred.values()];
   const evidence = budgeted.state.memoryEvidence ?? [];
+  const recentAuditEvents = getAuditEvents(
+    input.db,
+    input.projectId,
+    CONFIG.context.auditEventLimit,
+  );
+  const waste = reServedRetrievalWaste({ deferredDetails, auditEvents: recentAuditEvents });
+  auditOverCompressionWaste({
+    db: input.db,
+    projectId: input.projectId,
+    policyId: compressionPolicy.id,
+    ids: waste.ids,
+    tokens: waste.tokens,
+    retrieveCounts: waste.retrieveCounts,
+  });
   const contextAccuracySignals: ContextAccuracySignals = {
     evidenceMode,
     evidenceEnabled: evidenceEnabled(evidenceMode, taskType),
     queryTerms: queryTerms(query),
     retrievalSubqueries: semanticSelection.subqueries,
     selectedEvidenceCount: evidence.length,
+    reServedRetrievedCount: waste.count,
+    reServedRetrievedIds: waste.ids,
+    overCompressionWasteTokens: waste.tokens,
   };
 
   return {

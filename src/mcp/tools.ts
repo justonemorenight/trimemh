@@ -215,6 +215,9 @@ export function registerMemoryTools(
           `ccr_full=${assembled.ccrStats.fullCount}`,
           `ccr_tokens_saved=${assembled.ccrStats.totalTokensSaved}`,
           `ccr_retrievable=${assembled.ccrStats.retrievableCount}`,
+          `ccr_re_served_retrieved_count=${assembled.contextAccuracySignals.reServedRetrievedCount}`,
+          `ccr_re_served_retrieved_ids=${assembled.contextAccuracySignals.reServedRetrievedIds.join(",") || "none"}`,
+          `ccr_over_compression_waste_tokens=${assembled.contextAccuracySignals.overCompressionWasteTokens}`,
           `prefix_changed=${assembled.prefixChanged}`,
         ].join("\n");
 

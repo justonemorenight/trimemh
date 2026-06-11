@@ -20,6 +20,9 @@ export interface ContextAccuracySignals {
   queryTerms: string[];
   retrievalSubqueries: string[];
   selectedEvidenceCount: number;
+  reServedRetrievedCount: number;
+  reServedRetrievedIds: string[];
+  overCompressionWasteTokens: number;
 }
 
 const STOP_WORDS = new Set([

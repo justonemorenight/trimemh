@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { randomUUID } from "node:crypto";
 
 import { getMemoriesForCode, recall } from "../application/recall-use-cases";
 import { CONFIG } from "../config";
@@ -19,7 +20,7 @@ import type {
 } from "../domain/schema";
 import { KIND_RISK_MAP } from "../domain/schema";
 import { getActiveMemoryCountsByProject } from "../persistence/proposal-repo";
-import { getMemoryStats, getRelatedMemoryRows } from "../persistence/repository";
+import { getMemoryStats, getRelatedMemoryRows, insertAuditEvent } from "../persistence/repository";
 import { shouldAutoApproveLink, shouldAutoApproveMemory } from "./auto-approval";
 import { suggestCodeLinksFromText } from "./code-link-suggest";
 import {
@@ -290,6 +291,28 @@ export function mcpRetrieveFull(
     item = resolveMemoryId(db, projectId, id);
   } catch {
     return null;
+  }
+
+  try {
+    const timestamp = new Date().toISOString();
+    insertAuditEvent(db, {
+      id: randomUUID(),
+      project_id: projectId,
+      actor: "mcp:memory_retrieve",
+      event_type: "memory_retrieve",
+      entity_type: "memory_item",
+      entity_id: item.id,
+      payload_json: JSON.stringify({
+        requested_id: id,
+        resolved_id: item.id,
+        text_chars: item.text.length,
+        estimated_tokens: Math.ceil(item.text.length / 4),
+        timestamp,
+      }),
+      created_at: timestamp,
+    });
+  } catch {
+    // Retrieval correctness takes precedence over telemetry.
   }
 
   const related = getRelatedMemoryRows(db, projectId, item.id, 1).slice(0, 5);

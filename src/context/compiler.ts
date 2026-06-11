@@ -16,6 +16,14 @@ import {
   registerDeferred,
   trackFullText,
 } from "./ccr";
+import {
+  buildLibraryGuardDisplay,
+  buildSafeFallbackDisplay,
+  compressionFallbackReason,
+  compressionLosesCriticalMarkers,
+  estimateCompressionTokens,
+  libraryOrGeneratedReason,
+} from "./compression-safety";
 import type { MemoryContentType } from "./content-router";
 import { renderContentByType } from "./content-router";
 import type { MemoryEvidenceInput } from "./evidence";
@@ -400,6 +408,28 @@ function buildSmartDetailOutput(item: MemoryItem): SmartDetailOutput {
     };
   }
 
+  // Generated/library blobs are rarely useful in-context and can inflate prompts.
+  const libraryReason = libraryOrGeneratedReason(item);
+  if (libraryReason) {
+    const guarded = buildLibraryGuardDisplay(item, libraryReason);
+    return {
+      displayContent: guarded.display,
+      contentType: "code",
+      compressed: guarded.compressed,
+      deferred:
+        guarded.tokenSaved > 0
+          ? {
+              memoryId: item.id,
+              fullText: item.text,
+              summary: guarded.display,
+              tokenSaved: guarded.tokenSaved,
+              retrievalKey: `trimemh:${item.id}`,
+            }
+          : null,
+      displayTokens: estimateCompressionTokens(guarded.display),
+    };
+  }
+
   // Step 1+2: ContentRouter — type-specific compression
   const rendered = renderContentByType(item);
 
@@ -417,11 +447,36 @@ function buildSmartDetailOutput(item: MemoryItem): SmartDetailOutput {
     compressed = deferred !== null;
   }
 
+  let fallbackReason: string | null = null;
+  if (compressed) {
+    const codeCompressionStillSafe =
+      rendered.contentType === "code" &&
+      !compressionLosesCriticalMarkers(item.text, displayContent);
+    fallbackReason = codeCompressionStillSafe
+      ? null
+      : compressionFallbackReason(item.text, displayContent);
+  }
+  if (fallbackReason) {
+    const fallback = buildSafeFallbackDisplay(item, fallbackReason);
+    displayContent = fallback.display;
+    compressed = fallback.compressed;
+    deferred =
+      fallback.tokenSaved > 0
+        ? {
+            memoryId: item.id,
+            fullText: item.text,
+            summary: displayContent,
+            tokenSaved: fallback.tokenSaved,
+            retrievalKey: `trimemh:${item.id}`,
+          }
+        : null;
+  }
+
   // For content types where the type renderer already compressed but the
   // display is still verbose, also register for CCR retrieval
-  if (compressed && rendered.contentType !== "prose") {
+  if (compressed && rendered.contentType !== "prose" && !deferred) {
     // The type renderer compressed, but we still want to offer retrieval
-    const displayTokens = rendered.displayTokens;
+    const displayTokens = estimateCompressionTokens(displayContent);
     const fullTokens = Math.ceil(item.text.length / 4);
     const tokenSaved = Math.max(0, fullTokens - displayTokens);
 
@@ -441,7 +496,7 @@ function buildSmartDetailOutput(item: MemoryItem): SmartDetailOutput {
     contentType: rendered.contentType,
     compressed,
     deferred,
-    displayTokens: rendered.displayTokens,
+    displayTokens: estimateCompressionTokens(displayContent),
   };
 }
 
